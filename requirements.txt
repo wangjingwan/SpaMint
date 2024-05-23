@@ -1,0 +1,6 @@
+nbformat
+numpy
+scipy
+pandas
+scanpy
+loess
