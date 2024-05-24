@@ -1,4 +1,4 @@
-# SpedMod 
+# SpaMint
 
 # Pre-requirements
 * python3, numpy, pandas, scipy
