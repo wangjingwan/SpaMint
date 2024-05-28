@@ -18,7 +18,8 @@ def timeit(func):
         start = time.time()
         result = func(*args, **kwargs)
         end = time.time()
-        logging.info(f'{func.__name__}\t{end - start} seconds')
+        #logging.info(f'{func.__name__}\t{end - start} seconds')
+        print(f'{func.__name__}\t{end - start} seconds')
         return result
     return wrapper
 
@@ -100,7 +101,7 @@ class spaMint:
         utils.check_decon_type(self.weight, self.sc_adata, self.cell_type_key)
         print('Parameters checked!')
 
-    @timeit
+    #@timeit
     def prep(self):
         ######### init ############
         # 1. check input and parameters
@@ -132,7 +133,7 @@ class spaMint:
         self.st_aff_profile_df = optimizers.cal_aff_profile(self.st_exp, self.lr_df)
 
 
-    @timeit
+    #@timeit
     def select_cells(self, use_sc_orig = True, p = 0.1, mean_num_per_spot = 10, mode = 'strict', max_rep = 3, repeat_penalty = 10):
         self.repeat_penalty = repeat_penalty
         self.p = p
@@ -180,8 +181,11 @@ class spaMint:
         self.lr_df_align = self.lr_df[self.lr_df[0].isin(self.filter_st_exp.columns) & self.lr_df[1].isin(self.filter_st_exp.columns)].copy()
 
         # 4. init cell selection
-        self.spot_cell_dict, self.init_cor, self.picked_time = cell_selection.init_solution(self.num, self.filter_st_exp.index.tolist(),
-            self.csr_st_exp,self.csr_sc_exp,self.sc_meta[self.cell_type_key],self.trans_id_idx,self.repeat_penalty)
+        self.spot_cell_dict, self.init_cor, self.picked_time =\
+            cell_selection.init_solution(self.num, self.filter_st_exp.index.tolist(),
+            self.csr_st_exp, self.csr_sc_exp, self.sc_meta[self.cell_type_key], 
+            self.trans_id_idx,self.repeat_penalty)
+
         # self.init_sc_df = cell_selection.dict2df(self.spot_cell_dict,self.filter_st_exp,self.filter_sc_exp,self.sc_meta)
         self.init_sc_df = cell_selection.dict2df(self.spot_cell_dict, norm_hvg_st, norm_hvg_sc,self.sc_meta)
         # self.sum_sc_agg_exp = cell_selection.get_sum_sc_agg(norm_hvg_sc, self.init_sc_df, norm_hvg_st)
@@ -198,7 +202,8 @@ class spaMint:
             for i in range(max_rep):
                 self.sum_sc_agg_exp = cell_selection.get_sum_sc_agg(norm_hvg_sc, result, norm_hvg_st)
                 self.sc_agg_aff_profile_df = optimizers.cal_aff_profile(self.sum_sc_agg_exp, self.lr_df_align)
-                result, self.after_picked_time = cell_selection.reselect_cell(norm_hvg_st, self.spots_nn_lst, self.st_aff_profile_df, 
+                rs = cell_selection.reselect_cell
+                result, self.after_picked_time = rs(norm_hvg_st, self.spots_nn_lst, self.st_aff_profile_df, 
                             norm_hvg_sc, self.csr_sc_exp, self.sc_meta, self.trans_id_idx,
                             self.sum_sc_agg_exp, self.sc_agg_aff_profile_df,
                             result, self.picked_time, self.lr_df_align, 
@@ -225,7 +230,7 @@ class spaMint:
         return result
 
 
-    @timeit
+    #@timeit
     def run_gradient(self):
         # 1. First term
         self.term1_df,self.loss1 = optimizers.cal_term1(self.alter_sc_exp,self.sc_agg_meta,self.st_exp,self.svg,self.W_HVG)
@@ -263,7 +268,7 @@ class spaMint:
         self.term5_df,self.loss5 = optimizers.cal_term5(self.alter_sc_exp)
         
 
-    @timeit
+    #@timeit
     def init_grad(self):
         if isinstance(self.init_sc_embed, pd.DataFrame):
             self.sc_coord = utils.check_sc_coord(self.init_sc_embed)
@@ -281,7 +286,7 @@ class spaMint:
         print('Hyperparameters adjusted.')
 
 
-    @timeit
+    #@timeit
     def gradient_descent(self, alpha, beta, gamma, delta, eta, 
                 init_sc_embed = False,
                 iteration = 20, k = 2, W_HVG = 2,

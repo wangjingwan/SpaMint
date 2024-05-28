@@ -1,3 +1,5 @@
 __pycache__
 /tutorial/demo/demo_results/*
 .ipynb_checkpoints/
+
+/.venv/
