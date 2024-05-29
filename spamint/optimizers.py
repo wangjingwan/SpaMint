@@ -143,7 +143,7 @@ def findSpotKNN(st_coord, st_tp):
     total_sum = 0
     coordinates = st_coord.values
     if st_tp != 'slide-seq':
-        k = 6
+        k = 4
     else:
         k = 6
     kdtree = KDTree(coordinates)
