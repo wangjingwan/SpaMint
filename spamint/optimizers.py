@@ -16,7 +16,8 @@ import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 
 from . import utils
-
+import pdb
+import multiprocessing
 
 # TODO del after test
 def timeit(func):
@@ -143,7 +144,7 @@ def findSpotKNN(st_coord, st_tp):
     total_sum = 0
     coordinates = st_coord.values
     if st_tp != 'slide-seq':
-        k = 6
+        k = 4
     else:
         k = 6
     kdtree = KDTree(coordinates)
@@ -206,6 +207,7 @@ def findCellKNN(st_coord,st_tp,sc_meta,sc_coord,k):
         # sc_nn = findSpotKNN(sc_coord_st,st_tp)
         # 1.3 calculate real cell-cell distance
         sc_dist = pd.DataFrame(distance_matrix(sc_coord,sc_coord),columns = sc_meta.index, index = sc_meta.index)
+
         # 2. One hop cross-spot neighbor within a threshold
         # 2.1 Find threshold, i.e., sc_centroid distance
         sc_coord = pd.DataFrame(sc_coord,columns = ['x','y'])
@@ -220,8 +222,14 @@ def findCellKNN(st_coord,st_tp,sc_meta,sc_coord,k):
         sc_dist_st_nn = sc_dist_st_nn[sc_centroid_cells_dist > sc_dist_st_nn]
         # 2.2.2 Find k-nearest neighbor in each neighbor
         sc_dist_st_nn['spot'] = sc_meta['spot'].values
-        sc_knn = sc_dist_st_nn.groupby('spot').apply(apply_nsmallest, k = k, nn_dict = sc_knn)
-        sc_knn = sc_knn[sc_knn.keys()[0]]
+        # sc_knn = sc_dist_st_nn.groupby('spot').apply(apply_nsmallest, k = k, nn_dict = sc_knn)
+        # sc_knn = sc_knn[sc_knn.keys()[0]]
+        pool = multiprocessing.Pool(8)
+        ret_list = pool.starmap(apply_nsmallest, [(x, k) for _, x in sc_dist_st_nn.groupby('spot')])
+        for ret in ret_list:
+          for cell in ret:
+            sc_knn[cell].extend(ret[cell])
+
         # remove no neighbor cells
         empty_keys = [k for k, v in sc_knn.items() if not v]
         for k in empty_keys:
@@ -259,14 +267,16 @@ def findCellKNN_slide(sc_meta,sc_coord):
     return sc_knn
 
 
-@timeit
-def apply_nsmallest(x, k, nn_dict):
+def apply_nsmallest(x, k, nn_dict=None):
     x = x.dropna(axis=1, how='all')
+    ret = {}
     for cell in x.columns:
         #print(cell,x[cell].nsmallest(k).index.tolist())
         if cell != 'spot':
-            nn_dict[cell].extend(x[cell].nsmallest(k).index.tolist())
-    return nn_dict
+            #nn_dict[cell].extend(x[cell].nsmallest(k).index.tolist())
+            ret[cell] = x[cell].nsmallest(k).index.tolist()
+    #return nn_dict
+    return ret
 
 
 @timeit
@@ -369,7 +379,54 @@ def calSumNNRL(exp, spot_knn_df, cell_neigbors, gene_lst):
     return sum_ncg
 
 
-@timeit
+def cal_term4_fn(spot,sc_knn,st_aff_profile_df,alter_sc_exp,sc_meta,spot_cell_dict,lr_df):
+    spot_cells = spot_cell_dict[spot]
+    # 1. find knn id and its affiliated spot
+    # spot_knn_df = knn_df[knn_df['cell_idx'].isin(spot_cells)]
+    spot_knn_df = pd.DataFrame(
+        [(x, sc_knn[x]) for x in spot_cells if x in sc_knn],
+        columns = ['cell_idx', 'nn_cell_idx'])
+    spot_knn_df = spot_knn_df.explode('nn_cell_idx')
+    spot_knn_df['spot'] = sc_meta.loc[spot_knn_df['nn_cell_idx'].tolist()]['spot'].values
+    cell_idx = spot_knn_df['cell_idx']
+    cell_nn_idx = spot_knn_df['nn_cell_idx']
+    # n_knn += len(cell_nn_idx)
+    # some spot has no nn for any cell in it.
+    if cell_nn_idx.tolist():
+        # 2. calculate acc
+        tmp_acc = cal_sc_aff_profile(cell_idx, cell_nn_idx, alter_sc_exp, lr_df)
+        tmp_acc = tmp_acc.reset_index()
+        del tmp_acc[tmp_acc.columns[0]]
+        tmp_acc['spot'] = spot_knn_df['spot'].values
+        a_cc = tmp_acc.groupby('spot').mean()
+        # 3. calculate ass
+        a_ss = st_aff_profile_df.loc[(spot,a_cc.index.tolist()),:]
+        a_cc_modi = np.sqrt(a_cc/2)
+        a_ss_modi = np.sqrt(a_ss/2)
+        res_tmp = a_cc_modi - a_ss_modi.values
+        loss_tmp = np.sum((res_tmp**2).values)
+        # loss_4 += loss_tmp
+        if np.isnan(loss_tmp):
+            print(f'{spot}')
+            print(f'acc{a_cc}')
+            print(f'ass{a_ss}')
+            print(f'a_cc_modi{a_cc_modi}')
+            print(f'a_ss_modi{a_ss_modi}')
+            print(f'res_tmp{res_tmp}')
+        # 4. calculate multiplier
+        sum_r = calSumNNRL(alter_sc_exp, spot_knn_df, cell_nn_idx, lr_df[1])
+        sum_l = calSumNNRL(alter_sc_exp, spot_knn_df, cell_nn_idx, lr_df[0])
+        res_L = sum_r.groupby('cell_idx').apply(multiply_spots,res_tmp = res_tmp)
+        res_R = sum_l.groupby('cell_idx').apply(multiply_spots,res_tmp = res_tmp)
+        # ? res_R.columns = sum_r.columns
+        res_LR = pd.concat([res_L,res_R],axis =1)
+        # sum for each adj spot
+        ave_res_LR = res_LR.groupby('cell_idx').sum()
+        # ave for same gene in LRdb
+        res = ave_res_LR.T.groupby('symbol').mean().T
+        #term4_LR = pd.concat([term4_LR,res],axis =0)
+    return (res, len(cell_nn_idx), loss_tmp)
+
 def cal_term4(st_exp,sc_knn,st_aff_profile_df,sc_exp,sc_meta,spot_cell_dict,lr_df):
     ''' 
     st_exp = obj_spex.st_exp
@@ -382,56 +439,25 @@ def cal_term4(st_exp,sc_knn,st_aff_profile_df,sc_exp,sc_meta,spot_cell_dict,lr_d
     '''
     alter_sc_exp = sc_exp[st_exp.columns].copy()
     # generate knn_df: cell_idx	-> nn_cell_idx
-    knn_df = pd.DataFrame(sc_knn.items(), columns=['cell_idx', 'nn_cell_idx'])
-    knn_df = knn_df.explode('nn_cell_idx')
-    nn_cell_idx = knn_df['nn_cell_idx'].tolist()
-    df = sc_meta.loc[nn_cell_idx].copy()
-    knn_df['spot'] = df['spot'].values
+    # calculate when need
+    # knn_df = pd.DataFrame(sc_knn.items(), columns=['cell_idx', 'nn_cell_idx'])
+    # knn_df = knn_df.explode('nn_cell_idx')
+    # nn_cell_idx = knn_df['nn_cell_idx'].tolist()
+    # df = sc_meta.loc[nn_cell_idx].copy()
+    # knn_df['spot'] = df['spot'].values
     term4_LR = pd.DataFrame()
     loss_4 = 0
     n_knn = 0
-    for spot in st_exp.index:
-        spot_cells = spot_cell_dict[spot]
-        # 1. find knn id and its affiliated spot
-        spot_knn_df = knn_df[knn_df['cell_idx'].isin(spot_cells)]
-        cell_idx = spot_knn_df['cell_idx']
-        cell_nn_idx = spot_knn_df['nn_cell_idx']
-        n_knn += len(cell_nn_idx)
-        # some spot has no nn for any cell in it.
-        if cell_nn_idx.tolist():
-            # 2. calculate acc
-            tmp_acc = cal_sc_aff_profile(cell_idx, cell_nn_idx, alter_sc_exp, lr_df)
-            tmp_acc = tmp_acc.reset_index()
-            del tmp_acc[tmp_acc.columns[0]]
-            tmp_acc['spot'] = spot_knn_df['spot'].values
-            a_cc = tmp_acc.groupby('spot').mean()
-            # 3. calculate ass
-            a_ss = st_aff_profile_df.loc[(spot,a_cc.index.tolist()),:]
-            a_cc_modi = np.sqrt(a_cc/2)
-            a_ss_modi = np.sqrt(a_ss/2)
-            res_tmp = a_cc_modi - a_ss_modi.values
-            loss_tmp = np.sum((res_tmp**2).values)
-            loss_4 += loss_tmp
-            if np.isnan(loss_tmp):
-                print(f'{spot}')
-                print(f'acc{a_cc}')
-                print(f'ass{a_ss}')
-                print(f'a_cc_modi{a_cc_modi}')
-                print(f'a_ss_modi{a_ss_modi}')
-                print(f'res_tmp{res_tmp}')
-            # 4. calculate multiplier
-            sum_r = calSumNNRL(alter_sc_exp, spot_knn_df, cell_nn_idx, lr_df[1])
-            sum_l = calSumNNRL(alter_sc_exp, spot_knn_df, cell_nn_idx, lr_df[0])
-            res_L = sum_r.groupby('cell_idx').apply(multiply_spots,res_tmp = res_tmp)
-            res_R = sum_l.groupby('cell_idx').apply(multiply_spots,res_tmp = res_tmp)
-            # ? res_R.columns = sum_r.columns
-            res_LR = pd.concat([res_L,res_R],axis =1)
-            # sum for each adj spot
-            ave_res_LR = res_LR.groupby('cell_idx').sum()
-            # ave for same gene in LRdb
-            res = ave_res_LR.T.groupby('symbol').mean().T
-            term4_LR = pd.concat([term4_LR,res],axis =0)
-        #break
+    #for spot in st_exp.index:
+    pool = multiprocessing.Pool(8)
+    arglist = [(x,sc_knn,st_aff_profile_df,sc_exp,sc_meta,spot_cell_dict,lr_df)
+               for x in st_exp.index]
+    ret_list = pool.starmap(cal_term4_fn, arglist)
+    for ret in ret_list:
+        term4_LR = pd.concat([term4_LR,ret[0]],axis =0)
+        n_knn += ret[1]
+        loss_4 += ret[2]
+
     loss_4 /= n_knn
     # if np.isnan(loss_4):
     #     print('nananananana')
@@ -576,7 +602,7 @@ def coord_eva(coord, ans, chunk_size = 12):
         cor = pear(ans[process_i], chunk)
         # print(cor)
         cor_all += cor
-    print(f'Avearge shape correlation is: {cor_all/chunk_size}')
+    print(f'Average shape correlation is: {cor_all/chunk_size}')
     return cor_all/chunk_size
 
 
