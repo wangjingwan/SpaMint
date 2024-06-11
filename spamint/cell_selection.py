@@ -3,6 +3,7 @@ import numpy as np
 import time
 import logging
 from scipy.sparse import csr_matrix
+from scipy.spatial import KDTree
 
 from loess.loess_1d import loess_1d
 REALMIN = np.finfo(float).tiny
@@ -274,6 +275,7 @@ def reselect_cell(st_exp, spots_nn_lst, st_aff_profile_df,
     #pdb.set_trace()
 
     params = []
+    ret_arr = []
     for spot in spot_idx_lst:
       params.append((spot, st_exp, spots_nn_lst, st_aff_profile_df, 
                   sc_exp, csr_sc_exp, sc_meta, trans_id_idx,
@@ -380,6 +382,7 @@ def cellReplaceByBoth(spot,spot_cell_lst, sc_exp, sc_meta, tp_idx_dict, sum_sc_a
     '''
     Default mode, replace cell by highest exp and affinity correlation
     '''
+    kd_dict = {}
     for i in range(len(spot_cell_lst)):
         cell = spot_cell_lst[i]
         spot_cell_lst.remove(cell)
@@ -390,13 +393,21 @@ def cellReplaceByBoth(spot,spot_cell_lst, sc_exp, sc_meta, tp_idx_dict, sum_sc_a
 
         # get candidate cells from the same type
         removed_type = sc_meta.loc[cell]['celltype']
-        candi_cell_id = tp_idx_dict[removed_type]
+        candi_cell_id = tp_idx_dict[removed_type] # 拿全部相同类型的
         candi_exp = sc_exp.loc[candi_cell_id]
+        candi_idx = candi_exp.index.tolist()
+        if not removed_type in kd_dict:
+          kd_dict[removed_type] = KDTree(data=candi_exp.to_numpy())
+        kd = kd_dict[removed_type]
+        _, knn = kd.query(sc_exp.loc[cell].to_numpy(), k = 6)
+        candi_knn = [candi_idx[x] for x in knn]
+        candi_exp = sc_exp.loc[candi_knn]
 
         # calculate replaced agg for each candidates
         candi_exp_sum = candi_exp + remain_exp
 
-        # [exp cor] - time consuming
+        # [exp cor] - **time consuming**
+        # TODO: 修改算法
         exp_candi_cor = candi_exp_sum.T.corrwith(s_exp)
         # [interface cor]
         # interface cor with the nn spot of target spot

@@ -18,6 +18,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 from . import utils
 import pdb
 import multiprocessing
+import cProfile
 
 # TODO del after test
 def timeit(func):
@@ -185,8 +186,30 @@ def findSpotNeighbor(st_coord,st_tp):
     st_dist[st_dist != 1] = 0
     return st_dist
 
+def findCellKNN_fn(st_i,st_array,st_kdtree,sc_meta,sc_coord,k):
+    sc_knn = {}
+    # 1. Find neighboring cells from adjacent spot
+    # 1.1 找出所有spot的k个近邻
+    # 1.2 对要研究的spot，找出自己相邻spot的所有细胞
+    _, indexes = st_kdtree.query(st_array[st_i], k=4+1)
+    indexes = indexes.tolist()
+    indexes.remove(st_i)
+    sc_neighbors = sc_meta.query(" or ".join(
+      [('spot == "spot_' + str(x) + '"') for x in indexes])).index.tolist()
+    sc_myself = sc_meta.query(f'spot == "spot_{st_i}"').index.tolist()
 
-@timeit
+    sc_coord_neighbor = sc_coord[[int(x) for x in sc_neighbors]]
+    sc_coord_myself = sc_coord[[int(x) for x in sc_myself]]
+
+    # 1.3 对这些细胞造KDTree，然后在自己含有的细胞中分别求knn
+    sc_kdtree = KDTree(data=sc_coord_neighbor)
+    for sc_i in range(len(sc_myself)):
+        # 这种写法好像有问题，不符合原功能
+        _, sc_idxes = sc_kdtree.query(sc_coord_myself[sc_i], k=k)
+        sc_idxes = sc_idxes.tolist()
+        sc_knn[sc_myself[sc_i]] = [str(x) for x in sc_idxes]
+    return sc_knn
+
 def findCellKNN(st_coord,st_tp,sc_meta,sc_coord,k): 
     '''
     st_tp = 'visum'
@@ -199,13 +222,29 @@ def findCellKNN(st_coord,st_tp,sc_meta,sc_coord,k):
         sc_knn = {}
         for key in sc_meta.index.tolist():
             sc_knn[key] = []
-        # 1. Find neighboring cells from adjacent spot
+
+        st_array = st_coord.to_numpy()
+        st_kdtree = KDTree(data=st_array)
+        pool = multiprocessing.Pool(8)
+        arglist = [(x,st_array,st_kdtree,sc_meta,sc_coord,k)
+                   for x in range(len(st_array))]
+        ret_list = pool.starmap(findCellKNN_fn, arglist)
+        for ret in ret_list:
+          for cell in ret:
+            sc_knn[cell].extend(ret[cell])
+
+        # remove no neighbor cells
+        empty_keys = [k for k, v in sc_knn.items() if not v]
+        for k in empty_keys:
+            del sc_knn[k]
+        '''
         # 1.1 assign ST coord to cells
         _, sc_coord_st = sc_prep(st_coord, sc_meta)
         # 1.2 find neighboring cells from adjacent spot
         sc_nn = findSpotNeighbor(sc_coord_st,st_tp)
         # sc_nn = findSpotKNN(sc_coord_st,st_tp)
         # 1.3 calculate real cell-cell distance
+        # TODO: 不要用全部的distance
         sc_dist = pd.DataFrame(distance_matrix(sc_coord,sc_coord),columns = sc_meta.index, index = sc_meta.index)
 
         # 2. One hop cross-spot neighbor within a threshold
@@ -229,11 +268,7 @@ def findCellKNN(st_coord,st_tp,sc_meta,sc_coord,k):
         for ret in ret_list:
           for cell in ret:
             sc_knn[cell].extend(ret[cell])
-
-        # remove no neighbor cells
-        empty_keys = [k for k, v in sc_knn.items() if not v]
-        for k in empty_keys:
-            del sc_knn[k]
+        '''
     return sc_knn
 
 
@@ -392,6 +427,8 @@ def cal_term4_fn(spot,sc_knn,st_aff_profile_df,alter_sc_exp,sc_meta,spot_cell_di
     cell_nn_idx = spot_knn_df['nn_cell_idx']
     # n_knn += len(cell_nn_idx)
     # some spot has no nn for any cell in it.
+    res = None
+    loss_tmp = 0
     if cell_nn_idx.tolist():
         # 2. calculate acc
         tmp_acc = cal_sc_aff_profile(cell_idx, cell_nn_idx, alter_sc_exp, lr_df)
@@ -448,7 +485,6 @@ def cal_term4(st_exp,sc_knn,st_aff_profile_df,sc_exp,sc_meta,spot_cell_dict,lr_d
     term4_LR = pd.DataFrame()
     loss_4 = 0
     n_knn = 0
-    #for spot in st_exp.index:
     pool = multiprocessing.Pool(8)
     arglist = [(x,sc_knn,st_aff_profile_df,sc_exp,sc_meta,spot_cell_dict,lr_df)
                for x in st_exp.index]
@@ -573,6 +609,7 @@ def sc_adj_cal(st_coord, picked_sc_meta,chunk_size = 12):
     unit_len = all_x[1] - all_x[0]
     r = 2 * unit_len + alpha
     
+    #TODO: 优化距离计算
     indicator = lil_matrix((len(sc_coord),len(sc_coord)))
     ans = {}
     n_last_row = 0
