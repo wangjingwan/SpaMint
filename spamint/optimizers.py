@@ -210,12 +210,17 @@ def findCellKNN_fn(st_i,st_array,st_kdtree,sc_meta,sc_coord,k):
         sc_knn[sc_myself[sc_i]] = [str(x) for x in sc_idxes]
     return sc_knn
 
+st_array = None
+st_kdtree = None
+
 def findCellKNN(st_coord,st_tp,sc_meta,sc_coord,k): 
     '''
     st_tp = 'visum'
     k = 2
     sc_coord = obj_spex.sc_coord
     '''
+    global st_array
+    global st_kdtree
     if st_tp == 'slide-seq':
         sc_knn = findCellKNN_slide(sc_meta,sc_coord)
     else:
@@ -223,8 +228,9 @@ def findCellKNN(st_coord,st_tp,sc_meta,sc_coord,k):
         for key in sc_meta.index.tolist():
             sc_knn[key] = []
 
-        st_array = st_coord.to_numpy()
-        st_kdtree = KDTree(data=st_array)
+        if type(st_array) == type(None):
+            st_array = st_coord.to_numpy()
+            st_kdtree = KDTree(data=st_array)
         pool = multiprocessing.Pool(8)
         arglist = [(x,st_array,st_kdtree,sc_meta,sc_coord,k)
                    for x in range(len(st_array))]
@@ -608,8 +614,7 @@ def sc_adj_cal(st_coord, picked_sc_meta,chunk_size = 12):
     all_x = np.sort(list(set(st_coord.iloc[:,0])))
     unit_len = all_x[1] - all_x[0]
     r = 2 * unit_len + alpha
-    
-    #TODO: 优化距离计算
+
     indicator = lil_matrix((len(sc_coord),len(sc_coord)))
     ans = {}
     n_last_row = 0
@@ -696,7 +701,7 @@ def calculate_affinity_mat(lr_df, data):
     ligandindex = index[0].reset_index()[0]
     receptorindex = index[1].reset_index()[1]
     scores = index[2].reset_index()[2]
-    
+
     Atotake = ligandindex
     Btotake = receptorindex
     allscores = scores

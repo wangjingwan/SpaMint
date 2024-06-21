@@ -407,7 +407,6 @@ def cellReplaceByBoth(spot,spot_cell_lst, sc_exp, sc_meta, tp_idx_dict, sum_sc_a
         candi_exp_sum = candi_exp + remain_exp
 
         # [exp cor] - **time consuming**
-        # TODO: 修改算法
         exp_candi_cor = candi_exp_sum.T.corrwith(s_exp)
         # [interface cor]
         # interface cor with the nn spot of target spot

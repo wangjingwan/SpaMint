@@ -11,6 +11,7 @@ import logging
 import pandas as pd
 import numpy as np
 import os
+import cProfile
 
 # TODO del after test
 def timeit(func):
