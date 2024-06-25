@@ -86,9 +86,9 @@ def normalize_data(data):
 
 def half_life_prob(t,T=10):
     '''
-    # When one cell has been picked for T times, 
-    # its prob to be picked again decreases by half.
-    # T default as 10
+    When one cell has been picked for T times, 
+    its prob to be picked again decreases by half.
+    * T default as 10
     '''
     return (1/2)**(t/T)
 
@@ -249,6 +249,7 @@ def fn(spot, st_exp, spots_nn_lst, st_aff_profile_df,
     tmp['mix_cor_after'] = mix_corr
     return tmp
 
+
 def reselect_cell(st_exp, spots_nn_lst, st_aff_profile_df, 
                   sc_exp, csr_sc_exp, sc_meta, trans_id_idx,
                   sum_sc_agg_exp, sc_agg_aff_profile_df, 
@@ -272,7 +273,6 @@ def reselect_cell(st_exp, spots_nn_lst, st_aff_profile_df,
     result = pd.DataFrame()
     picked_time = init_picked_time.copy()
     gene_num = st_exp.shape[1]
-    #pdb.set_trace()
 
     params = []
     ret_arr = []

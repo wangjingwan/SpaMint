@@ -12,67 +12,15 @@ import pandas as pd
 import numpy as np
 import os
 import cProfile
-
-# TODO del after test
-def timeit(func):
-    def wrapper(*args, **kwargs):
-        start = time.time()
-        result = func(*args, **kwargs)
-        end = time.time()
-        #logging.info(f'{func.__name__}\t{end - start} seconds')
-        print(f'{func.__name__}\t{end - start} seconds')
-        return result
-    return wrapper
-
+import pdb
 
 class spaMint:
     '''
     @author: Jingwan WANG
     Created on 2022/11/09
-    SPROUT_impute_v2
-        1. Gradient <0 =0
-    SPROUT_impute_v3 2022/11/22
-        1. Term1 was equalized by dividing sc_spot_sum by cell number per spot
-        2. Term3 was equalized by: 
-            1) np.sqrt(aff/2); 
-            2) summed expression of pair RL to the mean when calculating rl_agg
-    SPROUT_impute_v4 2022/11/28
-        1. Term3 LRagg calculation
-            Given that a gene g1 can be consider as both L and R
-            Add the sum of L(g1) and R(g1)
-        2. Add regulization term \sum X^2 in gradient descent
-        3. Change Learning rate parameter from gamm to ETA
-        4. Add hyperparameter DELTA for the newly add regulization term
-        5. Change the naming format of the hyperparameters
-    SPROUT_impute_v5 2022/12/20
-        1. Added weight on hvg genes
-        2. Updated the calculation of term3 with neighobring-indicator mat, accelerate from 22s to 2s.
-        3. Remove parameter p_dist, change to auto scale.
-        4. Correct the scale method from same max each cell to same sum each cell.
-        5. Added inital adjustment of each term's weight
-    SPROUT_impute_v6 2023/03/14
-        1. Added center shift embedding
-        2. Add a new neighbor calculation method to adapt to slide-seq data
-        3. Assign coordinates if is slide-seq data 
-        4. Adapt to spatalk input
-        5. Enable user-specific init embedding
-        6. Deleted st_coord parameters, subset from st_adata
-    SPROUT_impute_v8 2023/06/12
-        1. Added reselect cells
-        2. Added prep
-    SPROUT_impute_v9 2023/07/24
-        1. Reform input, start from cell selection
-        2. Add estimation of cell number per spot function inspired from cytospace
-        3. Add repeat penalty for cell selection. If a cell have been selected over the threshold, lower its chosen probability.
-    SPROUT_impute_v10 2023/12/28
-        1. Fix bugs in cell selection processing slide-seq data (no neighbor found issue)
-        2. Release memory
-    SPROUT_impute_v11 2024/02/15
-        1. Adapt merfish data (less st gene)
-        2. Chage prep adata, if ST gene number is small, align with SC, fill with NA
+    See also CHANGELOG.txt
         
     st_tp: choose among either visum, st or slide-seq
-
     '''
     def __init__(self, save_path = None, st_adata = None, weight = None, 
                  sc_ref = None, sc_adata = None, cell_type_key = 'celltype', lr_df = None, 
@@ -86,7 +34,8 @@ class spaMint:
         self.cell_type_key = cell_type_key
         self.lr_df = lr_df
         self.st_tp = st_tp
-        
+        self._prep()
+
 
     def _check_input(self):
         if not os.path.exists(self.save_path):
@@ -102,8 +51,8 @@ class spaMint:
         utils.check_decon_type(self.weight, self.sc_adata, self.cell_type_key)
         print('Parameters checked!')
 
-    #@timeit
-    def prep(self):
+
+    def _prep(self):
         ######### init ############
         # 1. check input and parameters
         self._check_input()
@@ -134,7 +83,6 @@ class spaMint:
         self.st_aff_profile_df = optimizers.cal_aff_profile(self.st_exp, self.lr_df)
 
 
-    #@timeit
     def select_cells(self, use_sc_orig = True, p = 0.1, mean_num_per_spot = 10, mode = 'strict', max_rep = 3, repeat_penalty = 10):
         self.repeat_penalty = repeat_penalty
         self.p = p
@@ -231,7 +179,6 @@ class spaMint:
         return result
 
 
-    #@timeit
     def run_gradient(self):
         # 1. First term
         self.term1_df,self.loss1 = optimizers.cal_term1(self.alter_sc_exp,self.sc_agg_meta,self.st_exp,self.svg,self.W_HVG)
@@ -269,7 +216,6 @@ class spaMint:
         self.term5_df,self.loss5 = optimizers.cal_term5(self.alter_sc_exp)
         
 
-    #@timeit
     def init_grad(self):
         if isinstance(self.init_sc_embed, pd.DataFrame):
             self.sc_coord = utils.check_sc_coord(self.init_sc_embed)
@@ -287,7 +233,6 @@ class spaMint:
         print('Hyperparameters adjusted.')
 
 
-    #@timeit
     def gradient_descent(self, alpha, beta, gamma, delta, eta, 
                 init_sc_embed = False,
                 iteration = 20, k = 2, W_HVG = 2,
@@ -334,7 +279,7 @@ class spaMint:
             self.alter_sc_exp = self.alter_sc_exp - self.ETA * gradient
             # TODO check
             self.alter_sc_exp[self.alter_sc_exp<0] = 0
-            # v2 added 
+            # v2 added
 
             print(f'---{ite} self.loss4 {self.loss4} self.GAMMA {self.GAMMA} self.GAMMA*self.loss4 {self.GAMMA*self.loss4}')
             loss = self.loss1 + self.ALPHA*self.loss2 + self.BETA*self.loss3 + self.GAMMA*self.loss4 + self.DELTA*self.loss5
@@ -363,4 +308,4 @@ class spaMint:
             # v10
             self.sc_agg_meta[['st_x','st_y']] = self.sc_coord
             self.sc_agg_meta[['adj_spex_UMAP1','adj_spex_UMAP2']] = self.sc_coord
-        return self.alter_sc_exp,self.sc_agg_meta
+        return self.alter_sc_exp, self.sc_agg_meta

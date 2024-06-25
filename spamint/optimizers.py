@@ -20,22 +20,6 @@ import pdb
 import multiprocessing
 import cProfile
 
-# TODO del after test
-def timeit(func):
-    def wrapper(*args, **kwargs):
-        start = time.time()
-        result = func(*args, **kwargs)
-        end = time.time()
-        logging.info(f'{func.__name__}\t{end - start} seconds')
-        return result
-    return wrapper
-
-
-def pear(D,D_re):
-    tmp = np.corrcoef(D.flatten(order='C'), D_re.flatten(order='C'))
-    return tmp[0,1] 
-
-
 
 def loss_adj(loss1,loss2,loss3,loss4,loss5):
     adj2 = loss1/loss2
@@ -44,7 +28,7 @@ def loss_adj(loss1,loss2,loss3,loss4,loss5):
     adj5 = loss1/loss5
     return adj2,adj3,adj4,adj5
 
-@timeit
+
 def cal_term1_old(alter_sc_exp,sc_meta,st_exp):
     '''
     1. First term, towards spot expression
@@ -66,13 +50,13 @@ def cal_term1_old(alter_sc_exp,sc_meta,st_exp):
     return term1_df,loss_1
 
 
-@timeit   
 def cal_term1(sc_exp,sc_meta,st_exp,hvg,W_HVG):
     '''
     1. First term, towards spot expression
     '''  
     # add for merfish
     alter_sc_exp = sc_exp[st_exp.columns].copy()
+    pdb.set_trace()
     # 1.1 Aggregate exp of chosen cells for each spot 
     alter_sc_exp['spot'] = sc_meta['spot']
     sc_spot_sum = alter_sc_exp.groupby('spot').sum()
@@ -101,7 +85,6 @@ def cal_term1(sc_exp,sc_meta,st_exp,hvg,W_HVG):
     return term1_df,loss_1
 
 
-@timeit
 def cal_term2(alter_sc_exp,sc_distribution):
     '''
     2. Second term, towards sc cell-type specific expression
@@ -113,7 +96,6 @@ def cal_term2(alter_sc_exp,sc_distribution):
     return term2_df,loss_2     
 
 
-@timeit
 def findSpotKNN_old(st_coord, st_tp): 
     # TODO
     # write on 1107 to replace findSpotNeighbor in the future
@@ -169,7 +151,6 @@ def findSpotKNN(st_coord, st_tp):
     return knn_dict
 
 
-# @timeit
 def findSpotNeighbor(st_coord,st_tp):
     # old
     all_x = np.sort(list(set(st_coord.iloc[:,0])))
@@ -278,7 +259,6 @@ def findCellKNN(st_coord,st_tp,sc_meta,sc_coord,k):
     return sc_knn
 
 
-@timeit
 def findCellKNN_slide(sc_meta,sc_coord):
     # k=4+1 include self
     k = 7
@@ -320,7 +300,6 @@ def apply_nsmallest(x, k, nn_dict=None):
     return ret
 
 
-@timeit
 def complete_other_genes(alter_sc_exp, term_LR_df):
     '''
     Complete non-LR genes as zero for term3,4
@@ -330,7 +309,6 @@ def complete_other_genes(alter_sc_exp, term_LR_df):
     return term_df
 
 
-@timeit
 def cal_term3(alter_sc_exp,sc_knn,aff,sc_dist,rl_agg):
     # v3 added norm_aff and norm rl_cp to regulize the values
     # v5 Updated the calculation of term3 with [ind], accelerated.
@@ -367,8 +345,8 @@ def cal_term3(alter_sc_exp,sc_knn,aff,sc_dist,rl_agg):
     return term3_df,loss
 
 
-@timeit
 def cal_aff_profile(exp, lr_df):
+    # TODO: 重复计算的LRDF？
     lr_df_align = lr_df[lr_df[0].isin(exp.columns) & lr_df[1].isin(exp.columns)].copy()
     st_L = exp[lr_df_align[0]]
     st_R = exp[lr_df_align[1]]
@@ -378,8 +356,8 @@ def cal_aff_profile(exp, lr_df):
     return st_aff_profile_df
 
 
-@timeit
 def cal_sc_aff_profile(cell, cell_n, exp, lr_df):
+    # TODO: 重复计算的LRDF？
     lr_df_align = lr_df[lr_df[0].isin(exp.columns) & lr_df[1].isin(exp.columns)].copy()
     st_L1 = exp.loc[cell,lr_df_align[0]]
     st_R1 = exp.loc[cell_n,lr_df_align[1]]
@@ -400,13 +378,11 @@ def apply_spot_cell(x):
     return x.index.tolist()
 
 
-@timeit
 def multiply_spots(df,res_tmp):
     spot_lst = df.index.get_level_values('spot').tolist()
     return df.multiply(res_tmp.loc[spot_lst].values,axis = 1)
 
 
-@timeit
 def calSumNNRL(exp, spot_knn_df, cell_neigbors, gene_lst):
     '''
     Calculating the multiplier in term 4
@@ -507,14 +483,12 @@ def cal_term4(st_exp,sc_knn,st_aff_profile_df,sc_exp,sc_meta,spot_cell_dict,lr_d
     return term4_df, loss_4
 
 
-@timeit
 def cal_term5(alter_sc_exp):
     term5_df = alter_sc_exp*2
     loss5 = np.mean((alter_sc_exp**2).values)
     return term5_df, loss5
 
 #### first edition ####
-@timeit
 def generate_LR_agg(alter_sc_exp,lr_df):
     ''' L(g1): g1 as Receptor
         R(g1): g1 as Ligand
@@ -547,7 +521,6 @@ def generate_LR_agg(alter_sc_exp,lr_df):
     return rl_agg
 
 
-@timeit
 def chunk_cal_aff(adata, sc_dis_mat, lr_df):
     genes = list(adata.columns)
     lr_df = lr_df[lr_df[0].isin(genes) & lr_df[1].isin(genes)]
@@ -559,7 +532,7 @@ def chunk_cal_aff(adata, sc_dis_mat, lr_df):
     Atotake = ligandindex
     Btotake = receptorindex
     allscores = scores
-    idx_data = csr_matrix(adata).T
+    idx_data = csr_matrix(adata).T #为什么不一开始就把sc_exp转为稀疏矩阵保存呢
     for i in range(len(ligandindex)):
         if ligandindex[i] != receptorindex[i]:
             Atotake = Atotake.append(pd.Series(receptorindex[i]),ignore_index=True)
@@ -588,11 +561,10 @@ def chunk_cal_aff(adata, sc_dis_mat, lr_df):
     return affinitymat
 
 
-@timeit
 def sc_prep(st_coord, sc_meta):
-    picked_sc_meta = sc_meta.copy()
+    # picked_sc_meta = sc_meta.copy()
     # broadcast_st_adj_sc
-    st_coord = st_coord.loc[picked_sc_meta['spot'].unique()]
+    '''没必要创建这么多字典，直接造个dataframe不就好了
     idx_lst = st_coord.index.tolist()
     idx_dict = {k: v for v, k in enumerate(idx_lst)}
     picked_sc_meta['indice'] = picked_sc_meta['spot'].map(idx_dict)
@@ -603,12 +575,23 @@ def sc_prep(st_coord, sc_meta):
     picked_sc_meta = picked_sc_meta.sort_values(by = 'indice')
     # dist calculation
     sc_coord = picked_sc_meta[['st_x','st_y']]
+    '''
+    # 删掉空spot并返回待修改的sc坐标集
+    st_coord = st_coord.loc[sc_meta['spot'].unique()]
+    # 虽然这里写了个O(n)了，但是**或许**直接比前面copy一次开销还要小
+    # 因为要用到st_coord还写不了apply + lambda了
+    sc_range = range(len(sc_meta))
+    sc_coord = pd.DataFrame(columns=['st_x', 'st_y'],index=list(sc_range))
+    for i in sc_range:
+        sc = sc_meta.iloc[i]
+        coord = st_coord.loc[sc['spot']]
+        sc_coord.loc[i] = [ coord.x, coord.y ]
     return st_coord, sc_coord
 
 
-@timeit
 def sc_adj_cal(st_coord, picked_sc_meta,chunk_size = 12):
     alpha = 0
+    # TODO: 好像多算了一次st_coord，先不管
     st_coord, sc_coord = sc_prep(st_coord, picked_sc_meta)
     # alpha = 0 for visum data
     all_x = np.sort(list(set(st_coord.iloc[:,0])))
@@ -634,6 +617,12 @@ def sc_adj_cal(st_coord, picked_sc_meta,chunk_size = 12):
     return st_coord, indicator, ans
 
 
+
+def pear(D,D_re):
+    tmp = np.corrcoef(D.flatten(order='C').astype('float64'), D_re.flatten(order='C').astype('float64'))
+    return tmp[0,1] 
+
+
 def coord_eva(coord, ans, chunk_size = 12):
     coord = np.array(coord)
     cor_all = 0
@@ -648,7 +637,6 @@ def coord_eva(coord, ans, chunk_size = 12):
     return cor_all/chunk_size
 
 
-@timeit
 def embedding(sparse_A, ans, path, left_range = 0, right_range = 30, steps = 30, dim = 2, verbose = False):
     aff = np.array(sparse_A, dtype = 'f')
     mask1 = (aff < 9e-300) & (aff >= 0)
@@ -659,33 +647,24 @@ def embedding(sparse_A, ans, path, left_range = 0, right_range = 30, steps = 30,
     #D = csr_matrix(aff) too less neighbor will occur
     del mask
     max_shape = 0
-    if verbose:
-    # save all reconstructed result
-        for i in range(int(left_range),int(right_range)):
-            for j in range(steps):
-                coord = umap.UMAP(n_components=dim, metric = "precomputed", n_neighbors=int(np.round((i+1)*15)), random_state = 100*j+3).fit_transform(aff)
-                cor = coord_eva(coord, ans, chunk_size = 12)
+    for i in range(int(left_range),int(right_range)):
+        for j in range(steps):
+            coord = umap.UMAP(n_components=dim, metric = "precomputed", n_neighbors=(i+1)*15, random_state = 100*j+3).fit_transform(aff)
+            cor = coord_eva(coord, ans, chunk_size = 12)
+            if verbose:
+                # save all reconstructed result
                 pd.DataFrame(coord).to_csv(path + str(i) + '_' + str(j) + '.csv',index = False, header= False, sep = ',')
-                # print(f'neighbor_{(i+1)*15}, random_{j} cor: {cor}')
-                if cor > max_shape:
-                    max_shape = cor
-                    best_in_shape = coord
+            # print(f'neighbor_{(i+1)*15}, random_{j} cor: {cor}')
+            if cor > max_shape:
+                max_shape = cor
+                best_in_shape = coord
+    if verbose:
         pd.DataFrame(best_in_shape).to_csv(path + 'coord_best.csv',index = False, header= False, sep = ',')
         print(f'max shape cor is {max_shape}')
-    else:
-    # only output the best reconstructed result
-        for i in range(int(left_range),int(right_range)):
-            for j in range(steps):
-                coord = umap.UMAP(n_components=dim, metric = "precomputed", n_neighbors=(i+1)*15, random_state = 100*j+3).fit_transform(aff)
-                cor = coord_eva(coord, ans, chunk_size = 12)
-                if cor > max_shape:
-                    max_shape = cor
-                    best_in_shape = coord
     #print('Reached a correlation in shape at:', max_shape)
     return best_in_shape
 
 
-@timeit
 def calculate_affinity_mat(lr_df, data):
     '''
     This function calculate the affinity matrix from TPM and LR pairs.
@@ -722,7 +701,6 @@ def calculate_affinity_mat(lr_df, data):
     return affinitymat
 
 
-@timeit
 def aff_embedding(alter_sc_exp,st_coord,sc_meta,lr_df,save_path, left_range = 1, right_range = 2, steps = 1, dim = 2,verbose = False):
     # 3.1 prep initial embedding that term3 requires
     ordered_st_coord, sc_dis_mat, ans = sc_adj_cal(st_coord, sc_meta, chunk_size = 12)
@@ -738,7 +716,6 @@ def aff_embedding(alter_sc_exp,st_coord,sc_meta,lr_df,save_path, left_range = 1,
     return coord,ordered_st_coord,sparse_A,ans
 
 
-@timeit
 def get_hvg(adata):
     p_adata = sc.pp.normalize_total(adata, target_sum=1e4,copy = True)
     sc.pp.log1p(p_adata)

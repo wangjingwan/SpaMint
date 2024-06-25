@@ -6,10 +6,18 @@
 Welcome to SpaMint's documentation!
 ===================================
 
+这是SpaMint文档的模板
+
+项目中的类型注解太少了，any满天飞
+
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
 
+   ./prep.rst
+   ./select_cell.rst
+   ./affinity.rst
+   .. ./gradient_descent.rst
 
 
 Indices and tables
