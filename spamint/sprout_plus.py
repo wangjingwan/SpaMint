@@ -189,6 +189,7 @@ class spaMint:
         print('Second-term calculation done!')
 
         # 3. Third term, closer cells have larger affinity
+        '''
         if not (self.st_tp == 'slide-seq' and hasattr(self, 'sc_knn')):
             # if slide-seq and already have found sc_knn
             # dont do it again
@@ -196,14 +197,16 @@ class spaMint:
             # 3.2 get c' = N(c)
             self.sc_knn = optimizers.findCellKNN(self.st_coord,self.st_tp,self.sc_agg_meta,self.sc_coord,self.K)
             utils.check_empty_dict(self.sc_knn)
+        '''
         # 3.3 get the paring genes (g') of gene g for each cells
         self.rl_agg = optimizers.generate_LR_agg(self.alter_sc_exp,self.lr_df)
         # 3.4 get the affinity
         self.aff = optimizers.calculate_affinity_mat(self.lr_df, self.alter_sc_exp.T)
         np.fill_diagonal(self.aff,0)
         self.aff = pd.DataFrame(self.aff, index = self.sc_agg_meta.index, columns=self.sc_agg_meta.index)
+        self.sc_knn = optimizers.findCellAffinityKNN(self.spots_nn_lst, self.sc_agg_meta, self.aff, self.K)
         # 3.5 Calculate the derivative
-        self.term3_df,self.loss3 = optimizers.cal_term3(self.alter_sc_exp,self.sc_knn,self.aff,self.sc_dist,self.rl_agg)
+        self.term3_df,self.loss3 = optimizers.cal_term3(self.alter_sc_exp,self.sc_knn,self.aff,None,self.rl_agg)
         print('Third term calculation done!')
 
         # 4. Fourth term, towards spot-spot affinity profile
@@ -217,6 +220,7 @@ class spaMint:
         
 
     def init_grad(self):
+        '''禁用每次的aff_embedding试试
         if isinstance(self.init_sc_embed, pd.DataFrame):
             self.sc_coord = utils.check_sc_coord(self.init_sc_embed)
             print('Using user provided init sc_coord.')
@@ -225,11 +229,12 @@ class spaMint:
             # TODO 减少aff计算次数；使用sparse array
             self.sc_coord,_,_,_ = optimizers.aff_embedding(self.alter_sc_exp,self.st_coord,self.sc_agg_meta,self.lr_df,
                             self.save_path,self.left_range,self.right_range,self.steps,self.dim,verbose = False)
+        '''
         self.run_gradient()
         # v5 calculte the initial loss of each term to balance their force.
         adj2,adj3,adj4,adj5 = optimizers.loss_adj(self.loss1,self.loss2,self.loss3,self.loss4,self.loss5)
         self.ALPHA,self.BETA,self.GAMMA,self.DELTA = self.ALPHA*adj2,self.BETA*adj3,self.GAMMA*adj4,self.DELTA*adj5
-        self.sc_agg_meta[['UMAP1','UMAP2']] = self.sc_coord
+        #self.sc_agg_meta[['UMAP1','UMAP2']] = self.sc_coord
         print('Hyperparameters adjusted.')
 
 
@@ -270,10 +275,12 @@ class spaMint:
         ######### init done ############
         for ite in range(self.iteration):
             print(f'-----Start iteration {ite} -----')
+            '''禁用每次的aff_embedding试试
             # TODO 减少aff计算次数；使用sparse array
             if self.st_tp != 'slide-seq':
                 self.sc_coord,_,_,_ = optimizers.aff_embedding(self.alter_sc_exp,self.st_coord,self.sc_agg_meta,self.lr_df,
                                 self.save_path,self.left_range,self.right_range,self.steps,self.dim)
+            '''
             self.run_gradient()
             gradient = self.term1_df - self.ALPHA*self.term2_df + self.BETA*self.term3_df + self.GAMMA*self.term4_df + self.DELTA*self.term5_df
             self.alter_sc_exp = self.alter_sc_exp - self.ETA * gradient
