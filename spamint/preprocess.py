@@ -133,6 +133,7 @@ def prep_all_adata(sc_exp = None, st_exp = None, sc_distribution = None,
     sc_exp = sc_exp[genes]
     st_exp = st_exp[genes]
     sc_distribution = sc_distribution[genes]
+    # TODO：这个LR_DF后面又多算了好多次
     lr_df = lr_df[lr_df[0].isin(genes) & lr_df[1].isin(genes)]
     # Adata Preparation
     # 1. SC to adata

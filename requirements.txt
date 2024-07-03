@@ -1,0 +1,7 @@
+ipykernel
+nbformat
+numpy
+scipy
+pandas==1.5.2
+scanpy
+loess
