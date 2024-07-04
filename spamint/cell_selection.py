@@ -1,7 +1,6 @@
-import pandas as pd
 import numpy as np
-import time
-import logging
+import pandas as pd
+
 from scipy.sparse import csr_matrix
 from scipy.spatial import KDTree
 
@@ -9,9 +8,11 @@ from loess.loess_1d import loess_1d
 REALMIN = np.finfo(float).tiny
 from . import optimizers
 from . import utils
+from . import preprocess as pp
 import pdb
 import cProfile
 import multiprocessing
+
 
 def randomize(mat_orig):
     [m,n] = mat_orig.shape
@@ -55,25 +56,6 @@ def randomization(weight,spot_cell_num):
     num = randomize(num)
     # num.to_csv(path + 'cell_type_num_per_spot.csv', index = True, header= True, sep = ',')
     return num
-
-
-def estimate_cell_number(st_exp, mean_cell_numbers):
-    # transpose because cytospace has cell as columns
-    st_data = st_exp.T
-    # Read data
-    expressions = st_data.values.astype(float)
-    # Data normalization
-    expressions_tpm_log = normalize_data(expressions)
-    # Set up fitting problem
-    RNA_reads = np.sum(expressions_tpm_log, axis=0, dtype=float)
-    mean_RNA_reads = np.mean(RNA_reads)
-    min_RNA_reads = np.min(RNA_reads)
-    min_cell_numbers = 1 if min_RNA_reads > 0 else 0
-    fit_parameters = np.polyfit(np.array([min_RNA_reads, mean_RNA_reads]),
-                                np.array([min_cell_numbers, mean_cell_numbers]), 1)
-    polynomial = np.poly1d(fit_parameters)
-    cell_number_to_node_assignment = polynomial(RNA_reads).astype(int)
-    return cell_number_to_node_assignment
 
 
 def normalize_data(data):
@@ -515,3 +497,160 @@ def expSwap_SPROUT(spot_cell_lst, s_sc_exp, sc_meta, trans_id_idx, tp_idx_dict,
             tmp_cell_id.insert(0,cell_i)
         spot_cell_lst = tmp_cell_id
     return after_picked_time, spot_cell_lst, max_cor_rep
+
+
+class CellSelectionSolver:
+
+    weight: pd.DataFrame # spot x cellType; 每种细胞在spot中的比重(st_decon)
+    st_exp: pd.DataFrame # spot x gene 每个基因在Spot中表达程度
+    st_coord: pd.DataFrame # spot x (x,y) Spot的坐标
+    sc_ref: pd.DataFrame # cell x gene
+    sc_exp: pd.DataFrame # cell x gene 每个基因在细胞中表达程度
+    sc_meta: pd.DataFrame # cell x unknown 细胞的基本信息 与cell_type_key配合使用
+    lr_df: pd.DataFrame # id x (L,R,score) 计算Affinity需要的LR配对表
+
+    # 原先的传参
+    use_sc_orig = True
+    p = 0.1
+    mean_num_per_spot = 10
+    mode = 'strict'
+    max_rep = 3
+    repeat_penalty = 10
+
+    # 中间产物
+    num: pd.DataFrame # spot x celltype 其中所有数值都变成了整数
+    
+    def __init__(self, spex, use_sc_orig, p, mean_num_per_spot, mode, max_rep, repeat_penalty):
+        self.weight = spex.weight
+        self.st_exp = spex.st_exp
+        self.sc_exp = spex.sc_exp
+        self.lr_df = spex.lr_df
+        self.sc_meta = spex.sc_meta
+        self.cell_type_key = spex.cell_type_key
+        self.save_path = spex.save_path
+        self.spots_nn_lst = spex.spots_nn_lst
+        self.st_aff_profile_df = spex.st_aff_profile_df
+
+        self.use_sc_orig = use_sc_orig
+        self.p = p
+        self.mean_num_per_spot = mean_num_per_spot
+        self.mode = mode
+        self.max_rep = max_rep
+        self.repeat_penalty = repeat_penalty
+
+    def estimateCellNum(self):
+        # transpose because cytospace has cell as columns
+        st_data = self.st_exp.T
+        # Read data
+        expressions = st_data.values.astype(float)
+        # Data normalization
+        expressions_tpm_log = normalize_data(expressions)
+        # Set up fitting problem
+        RNA_reads = np.sum(expressions_tpm_log, axis=0, dtype=float)
+        mean_RNA_reads = np.mean(RNA_reads)
+        min_RNA_reads = np.min(RNA_reads)
+        min_cell_numbers = 1 if min_RNA_reads > 0 else 0
+        fit_parameters = np.polyfit(np.array([min_RNA_reads, mean_RNA_reads]),
+                                    np.array([min_cell_numbers, self.mean_num_per_spot]), 1)
+        polynomial = np.poly1d(fit_parameters)
+        cell_number_to_node_assignment = polynomial(RNA_reads).astype(int)
+        return cell_number_to_node_assignment
+
+    def calcNum(self):
+        if self.mean_num_per_spot == 0:	
+            self.num = self.weight	
+            print(f'\t mean_num_per_spot == 0; Using the exact cell number in each spot provided in weight.')
+        elif self.mean_num_per_spot == 1:
+            self.num = self.weight.apply(lambda x: x.eq(x.max()).astype(int), axis=1)
+            print(f'\t mean_num_per_spot == 1; Using the idxmax celltype for each spot.')
+        else:
+            print(f'\t Estimating the cell number in each spot by the deconvolution result.')	
+            spot_cell_num = self.estimateCellNum()
+            self.num = randomization(self.weight, spot_cell_num)
+
+    def unk1(self):
+        # if use_sc_orig:
+        #     sc_exp_re = self.sc_exp
+        #     sc_meta_re = self.sc_meta
+        # TODO
+        # else:
+        #     # No original sc_exp, use sc_agg for cell selection
+        #     sc_meta_re = self.sc_meta[['sc_id','celltype']].copy()
+        #     sc_meta_re = sc_meta_re.drop_duplicates()
+        #     sc_exp_re = self.alter_sc_exp.loc[sc_meta_re.index].copy()
+        #     sc_meta_re.index = sc_meta_re['sc_id']
+        #     sc_exp_re.index = sc_meta_re.index
+        #     print('Using sc agg for cell re-selection.')
+        pass
+
+    def solve(self):
+        '''
+        进行Cell Selection
+
+        计算结果保存在自己的result_xxx相关属性中
+        '''
+        self.calcNum()
+            
+        # 1. subset sc_exp and st_exp by intersection genes
+        self.filter_st_exp, self.filter_sc_exp = pp.subset_inter(self.st_exp, self.sc_exp)
+
+        # 2. feature selection
+        self.sort_genes = feature_sort(self.filter_sc_exp, degree = 2, span = 0.3)
+        self.lr_hvg_genes = lr_shared_top_k_gene(self.sort_genes, self.lr_df, k = 3000, keep_lr_per = 1)
+        print(f'\t SpexMod selects {len(self.lr_hvg_genes)} feature genes.')
+
+        # 3. scale and norm
+        self.trans_id_idx = pd.DataFrame(list(range(self.filter_sc_exp.shape[0])), index = self.filter_sc_exp.index)
+        self.hvg_st_exp = self.filter_st_exp.loc[:,self.lr_hvg_genes]
+        self.hvg_sc_exp = self.filter_sc_exp.loc[:,self.lr_hvg_genes]
+        norm_hvg_st = norm_center(self.hvg_st_exp)
+        norm_hvg_sc = norm_center(self.hvg_sc_exp)
+        self.csr_st_exp = csr_matrix(norm_hvg_st)
+        self.csr_sc_exp = csr_matrix(norm_hvg_sc)
+        # all lr that exp in st
+        self.lr_df_align = self.lr_df[self.lr_df[0].isin(self.filter_st_exp.columns) & self.lr_df[1].isin(self.filter_st_exp.columns)].copy()
+
+        # 4. init cell selection
+        self.spot_cell_dict, self.init_cor, self.picked_time =\
+            init_solution(self.num, self.filter_st_exp.index.tolist(),
+            self.csr_st_exp, self.csr_sc_exp, self.sc_meta[self.cell_type_key], 
+            self.trans_id_idx,self.repeat_penalty)
+
+        # self.init_sc_df = cell_selection.dict2df(self.spot_cell_dict,self.filter_st_exp,self.filter_sc_exp,self.sc_meta)
+        self.init_sc_df = dict2df(self.spot_cell_dict, norm_hvg_st, norm_hvg_sc,self.sc_meta)
+        # self.sum_sc_agg_exp = cell_selection.get_sum_sc_agg(norm_hvg_sc, self.init_sc_df, norm_hvg_st)
+        # self.sc_agg_aff_profile_df = optimizers.cal_aff_profile(self.sum_sc_agg_exp, self.lr_df_align)
+        result = self.init_sc_df
+        # TODO del after test
+        self.picked_time.to_csv(f'{self.save_path}/init_picked_time.csv')
+        self.init_sc_df.to_csv(f'{self.save_path}/init_picked_res.csv')
+
+        # 5. reselect cells
+        print('\t Swap selection start...')
+        if self.p == 0:
+            # p == 0, use sprout, input norm_hvg_sc and norm_hvg_st
+            for i in range(self.max_rep):
+                self.sum_sc_agg_exp = get_sum_sc_agg(norm_hvg_sc, result, norm_hvg_st)
+                self.sc_agg_aff_profile_df = optimizers.cal_aff_profile(self.sum_sc_agg_exp, self.lr_df_align)
+                rs = reselect_cell
+                result, self.after_picked_time = rs(norm_hvg_st, self.spots_nn_lst, self.st_aff_profile_df, 
+                            norm_hvg_sc, self.csr_sc_exp, self.sc_meta, self.trans_id_idx,
+                            self.sum_sc_agg_exp, self.sc_agg_aff_profile_df,
+                            result, self.picked_time, self.lr_df_align, 
+                            p = self.p, repeat_penalty = self.repeat_penalty)
+        else:
+            for i in range(self.max_rep):
+                self.sum_sc_agg_exp = get_sum_sc_agg(self.filter_sc_exp,result,self.filter_st_exp)
+                self.sc_agg_aff_profile_df = optimizers.cal_aff_profile(self.sum_sc_agg_exp, self.lr_df_align)
+                result, self.after_picked_time = reselect_cell(self.filter_st_exp, self.spots_nn_lst, self.st_aff_profile_df, 
+                            self.filter_sc_exp, self.csr_sc_exp, self.sc_meta, self.trans_id_idx,
+                            self.sum_sc_agg_exp, self.sc_agg_aff_profile_df,
+                            result, self.picked_time, self.lr_df_align, 
+                            p = self.p, repeat_penalty = self.repeat_penalty)
+
+            # TODO del after test
+            result.to_csv(f'{self.save_path}/result{i}.csv')
+            self.picked_time.to_csv(f'{self.save_path}/picked_time{i}.csv')
+
+        self.result = result
+

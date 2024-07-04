@@ -4,6 +4,7 @@ from scipy.special import digamma
 from scipy.spatial import distance_matrix
 from scipy.sparse import lil_matrix
 from scipy.sparse import csr_matrix
+from scipy.sparse import coo_matrix
 from scipy.spatial import KDTree
 from scipy import sparse
 import scanpy as sc
@@ -351,9 +352,9 @@ def cal_term3(alter_sc_exp,sc_knn,aff,sc_dist,rl_agg):
     norm_aff = np.sqrt(aff/2)
     term3_LR = pd.DataFrame()
     #FIXME: 干脆删了sc_dist相关，不知道怎么改
-    #sc_dist_re = sc_dist.copy()
-    #mask = sc_dist_re != 0
-    #sc_dist_re[mask] = 1 / sc_dist_re[mask]
+    sc_dist_re = sc_dist.copy()
+    mask = sc_dist_re != 0
+    sc_dist_re[mask] = 1 / sc_dist_re[mask]
     # ind: the neighboring indicator matrix
     # Row: cell; Col: the neighbor of this cell
     ind = pd.DataFrame([[False]*norm_aff.shape[1]]*norm_aff.shape[0],columns = norm_aff.columns,index = norm_aff.index)
@@ -362,9 +363,9 @@ def cal_term3(alter_sc_exp,sc_knn,aff,sc_dist,rl_agg):
     # n_cp: the neighboring cells of each cell (row-wise summation)
     n_cp = ind.sum(axis = 1)
     cp_aff_df = norm_aff[ind]
-    #cp_dist_df = sc_dist_re[ind]
+    cp_dist_df = sc_dist_re[ind]
     cp_aff_adj = utils.scale_global_MIN_MAX(cp_aff_df,MIN,MAX)
-    #cp_dist_adj = utils.scale_global_MIN_MAX(cp_dist_df,MIN,MAX)
+    cp_dist_adj = utils.scale_global_MIN_MAX(cp_dist_df,MIN,MAX)
     tmp1 = cp_aff_adj #- cp_dist_adj
     tmp2 = tmp1.fillna(0)
     term3_LR = 2*rl_agg.dot(tmp2.T)/n_cp
@@ -738,7 +739,7 @@ def calculate_affinity_mat(lr_df, data):
 # 计算Affinity矩阵，不过只计算各个细胞近邻Spot的，其他留0
 def calcNeighborAffinityMat(spots_nn_lst, sc_meta, lr_df, sc_exp):
     sc_count = len(sc_exp.index.tolist())
-    aff_mat = csr_matrix( (sc_count, sc_count) )
+    aff_mat = lil_matrix( (sc_count, sc_count) )
 
     # fetch the ligands' and receptors' indexes in the TPM matrix 
     # data.shape = gene * cell
@@ -785,7 +786,7 @@ def calcNeighborAffinityMat(spots_nn_lst, sc_meta, lr_df, sc_exp):
             for j in range(len(sc_neighbors)):
                 aff_mat[int(sc_myself[i]), int(sc_neighbors[j])] = affinitymat[i, j]
 
-    return aff_mat
+    return aff_mat.tocsr()
 
 
 def aff_embedding(alter_sc_exp,st_coord,sc_meta,lr_df,save_path, left_range = 1, right_range = 2, steps = 1, dim = 2,verbose = False):
