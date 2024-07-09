@@ -380,13 +380,15 @@ def cal_term3(alter_sc_exp,sc_knn,aff,sc_dist,rl_agg):
     return term3_df,loss
 
 
-def cal_aff_profile(exp, lr_df):
+def cal_aff_profile(exp, nn_list, lr_df):
     # TODO: 重复计算的LRDF？
     lr_df_align = lr_df[lr_df[0].isin(exp.columns) & lr_df[1].isin(exp.columns)].copy()
     st_L = exp[lr_df_align[0]]
     st_R = exp[lr_df_align[1]]
-    st_LR_df = pd.concat([st_L * st_R.values[i] for i in range(st_R.shape[0])], keys=st_R.index.tolist())
-    st_RL_df = pd.concat([st_R * st_L.values[i] for i in range(st_L.shape[0])], keys=st_L.index.tolist())
+    st_LR_df = pd.concat([st_L.loc[nn_list[st_R.iloc[i].name]] * st_R.values[i]\
+                          for i in range(st_R.shape[0])], keys=st_R.index.tolist())
+    st_RL_df = pd.concat([st_R.loc[nn_list[st_L.iloc[i].name]] * st_L.values[i]\
+                          for i in range(st_L.shape[0])], keys=st_L.index.tolist())
     st_aff_profile_df = st_LR_df + st_RL_df.values
     return st_aff_profile_df
 
@@ -407,10 +409,6 @@ def cal_sc_aff_profile(cell, cell_n, exp, lr_df):
     #print(st_LR_df2)
     st_aff_profile_df = st_LR_df1.values + st_LR_df2
     return st_aff_profile_df
-
-
-def apply_spot_cell(x):
-    return x.index.tolist()
 
 
 def multiply_spots(df,res_tmp):
@@ -737,7 +735,7 @@ def calculate_affinity_mat(lr_df, data):
 
 
 # 计算Affinity矩阵，不过只计算各个细胞近邻Spot的，其他留0
-def calcNeighborAffinityMat(spots_nn_lst, sc_meta, lr_df, sc_exp):
+def calcNeighborAffinityMat(spots_nn_lst, spot_cell_dict, lr_df, sc_exp):
     sc_count = len(sc_exp.index.tolist())
     aff_mat = lil_matrix( (sc_count, sc_count) )
 
@@ -771,17 +769,21 @@ def calcNeighborAffinityMat(spots_nn_lst, sc_meta, lr_df, sc_exp):
 
     # affinitymat = np.dot(np.dot(np.diag(allscores), A).T , B)
 
+    score_diag = np.diag(allscores)
     for spot in spots_nn_lst:
         st_neighbors = spots_nn_lst[spot]
         st_neighbors.append(spot)
-        sc_neighbors = sc_meta.query(" or ".join(
-            [(f'spot == "{x}"') for x in st_neighbors])).index.tolist()
-        sc_myself = sc_meta.query(f'spot == "{spot}"').index.tolist()
+        sc_neighbors = []
+        for x in st_neighbors: sc_neighbors += spot_cell_dict[x]
+        sc_myself = spot_cell_dict[spot]
         # 计算sc_myself与sc_neighbor中所有的aff并填表
         A = idx_data[sc_myself].loc[Atotake]
         B = idx_data[sc_neighbors].loc[Btotake]
 
-        affinitymat = np.dot(np.dot(np.diag(allscores), A).T , B)
+        # FIXME: 虽然节约内存了但是时间方面远不如之前的只进行一次dot
+        # FIXME: 必须找一个好办法来循环进行这么多次dot操作
+        # FIXME: multiprocessing在这里非常不好使 overhead太严重了
+        affinitymat = np.dot(np.dot(score_diag, A).T , B)
         for i in range(len(sc_myself)):
             for j in range(len(sc_neighbors)):
                 aff_mat[int(sc_myself[i]), int(sc_neighbors[j])] = affinitymat[i, j]

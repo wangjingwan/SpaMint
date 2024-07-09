@@ -216,5 +216,3 @@ def check_decon_type(weight, sc_adata, cell_type_key):
     if 'celltype' not in sc_adata.obs.columns:
       sc_adata.obs['celltype'] = sc_adata.obs[cell_type_key]
 
-
-

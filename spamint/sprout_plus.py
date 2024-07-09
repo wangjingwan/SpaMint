@@ -8,7 +8,22 @@ from .cell_selection import CellSelectionSolver
 from .gradient_descent import GradientDescentSolver
 
 import time
+import sys
 import logging
+logger = logging.getLogger()
+if logger.level != logging.DEBUG:
+    logger.setLevel(level = logging.DEBUG)
+    logformatter = logging.Formatter('[%(asctime)s/%(levelname)s] %(message)s')
+    logfile = logging.FileHandler("spexmod.log", mode='a')
+    logfile.setFormatter(logformatter)
+    logfile.setLevel(logging.DEBUG)
+    logger.addHandler(logfile)
+    console = logging.StreamHandler(stream=sys.stdout)
+    console.setFormatter(logformatter)
+    console.setLevel(logging.DEBUG)
+    logger.addHandler(console)
+numba_logger = logging.getLogger('numba')
+numba_logger.setLevel(logging.WARNING)
 
 import pandas as pd
 import numpy as np
@@ -39,12 +54,14 @@ class SpaMint:
     sc_exp: pd.DataFrame # cell x gene 每个基因在细胞中表达程度
     sc_meta: pd.DataFrame # cell x unknown 细胞的基本信息 与cell_type_key配合使用
     lr_df: pd.DataFrame # list(L,R,score) 计算Affinity需要的LR配对表
+    svg: pd.DataFrame
 
     # TODO: 计算时产生的中间量成员
     spots_nn_lst: dict[str, list[str]] # 每个spot的邻近spot 防止重复计算
     st_aff_profile_df: pd.DataFrame # spot x spot x aff_gene
     sc_agg_meta: pd.DataFrame # cell x [...] 主要指明cell位于的spot
     lr_df_align: pd.DataFrame
+    alter_sc_exp: pd.DataFrame
 
     def __init__(self, save_path = None, st_adata = None, weight = None, 
                  sc_ref = None, sc_adata = None, cell_type_key = 'celltype', lr_df = None, 
@@ -59,6 +76,7 @@ class SpaMint:
         self.lr_df = lr_df
         self.st_tp = st_tp
         self._prep()
+        logger.debug("SpaMint object created.")
 
 
     def _check_input(self):
@@ -73,7 +91,7 @@ class SpaMint:
         utils.check_st_sc_pair(self.st_adata, self.sc_adata)
         self.sc_adata,self.sc_ref = utils.check_sc(self.sc_adata, self.sc_ref)
         utils.check_decon_type(self.weight, self.sc_adata, self.cell_type_key)
-        print('Parameters checked!')
+        logger.debug('Parameters checked!')
 
 
     def _prep(self):
@@ -89,7 +107,7 @@ class SpaMint:
         # TODO redundant with feature selection in init
         self.svg = optimizers.get_hvg(self.st_adata)
         del self.st_adata
-        print('Getting svg genes')
+        logger.debug('Getting svg genes')
         # 4. remove no neighbor spots
         spots_nn_lst = optimizers.findSpotKNN(self.st_coord,self.st_tp)
         # TODO 可能会没有empty spots需要del
@@ -103,11 +121,13 @@ class SpaMint:
             self.st_coord = self.st_coord.drop(empty_spots)
             self.weight = self.weight.drop(empty_spots)
         self.spots_nn_lst = spots_nn_lst
-        self.st_aff_profile_df = optimizers.cal_aff_profile(self.st_exp, self.lr_df)
+        logger.debug("Calculating spots affinity profile data")
+        self.st_aff_profile_df = optimizers.cal_aff_profile(self.st_exp, spots_nn_lst, self.lr_df)
 
 
     def select_cells(self, use_sc_orig = True, p = 0.1, mean_num_per_spot = 10, mode = 'strict', max_rep = 3, repeat_penalty = 10):
         solver = CellSelectionSolver(self, use_sc_orig, p, mean_num_per_spot, mode, max_rep, repeat_penalty)
+        self.select_cells_solver = solver
         solver.solve()
         result = solver.result
         self.lr_df_align = solver.lr_df_align
@@ -123,5 +143,7 @@ class SpaMint:
                 left_range = 1, right_range = 2, steps = 1, dim = 2):
         solver = GradientDescentSolver(self, alpha, beta, gamma, delta, eta, 
                 init_sc_embed, iteration, k, W_HVG, left_range, right_range, steps, dim)
+        self.gradient_descent_solver = solver
         self.alter_sc_exp, self.sc_agg_meta = solver.gradient_descent()
+        self.sc_knn = solver.sc_knn
         return self.alter_sc_exp, self.sc_agg_meta

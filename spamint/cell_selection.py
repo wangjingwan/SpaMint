@@ -12,6 +12,8 @@ from . import preprocess as pp
 import pdb
 import cProfile
 import multiprocessing
+import logging
+logger = logging.getLogger(__name__)
 
 
 def randomize(mat_orig):
@@ -24,20 +26,20 @@ def randomize(mat_orig):
             # loop through each entry
             tmp = mat.iloc[i,j]
             if tmp!=0:
-                #print(tmp)
+                #logger.debug(tmp)
                 c = np.floor(tmp)
                 # if entry is integer, pass
                 if c == tmp:
                     continue
                 else:  
                     d = np.ceil(tmp)
-                    #print(c,d)
+                    #logger.debug(c,d)
                     new = np.random.choice([c,d], p=[d-tmp,tmp-c])
                     mat.iloc[i,j] = new
         if mat.iloc[i].sum(axis = 0) == 0:
             # at least one cell
             arg_max = mat_orig.iloc[i].argmax()
-            # print(f'Spot number {i} has one cell')
+            # logger.debug(f'Spot number {i} has one cell')
             mat.iloc[i,arg_max] = 1
     return mat
 
@@ -88,7 +90,7 @@ def feature_sort(exp, degree = 2, span = 0.3):
     var = np.array(np.log10(exp.var(axis=1) + REALMIN))
     mean = np.array(np.log10(exp.mean(axis=1) + REALMIN))
 
-    # 3. fit model 
+    # 3. fit model (time consuming)
     xout, yout, wout = loess_1d(mean, var, frac = span, degree = degree, rotate=False)
 
     # 4. calculate standaridized value
@@ -155,7 +157,7 @@ def init_solution(cell_type_num, spot_idx, csr_st_exp, csr_sc_exp, meta_df, tran
         agg_exp = csr_sc_exp[candi_idx].sum(axis = 0)
         cor = np.corrcoef(Es.toarray(),np.array(agg_exp))[0,1]
         correlations.append(cor)
-    print(f'\t Init solution: max - {np.max(correlations):.4f}, \
+    logger.debug(f'\t Init solution: max - {np.max(correlations):.4f}, \
     mean - {np.mean(correlations):.4f}, \
     min - {np.min(correlations):.4f}')
     picked_time.columns = ['count']
@@ -182,7 +184,7 @@ def fn(spot, st_exp, spots_nn_lst, st_aff_profile_df,
     norm_s_sc_agg_sum = s_sc_agg_sum / np.std(s_sc_agg_sum)
     # generate baseline corr
     max_exp_cor = np.corrcoef(norm_s_exp, norm_s_sc_agg_sum)[0][1]
-    # print(f'Baseline cor of spot {spot} is {max_exp_cor}')
+    # logger.debug(f'Baseline cor of spot {spot} is {max_exp_cor}')
 
     ###### Interface ########
     nn_spot = spots_nn_lst[spot]
@@ -196,12 +198,12 @@ def fn(spot, st_exp, spots_nn_lst, st_aff_profile_df,
     a_cc = sc_agg_aff_profile_df.loc[(spot,nn_spot), :]
     spot_cell_lst = init_sc_df[init_sc_df['spot'] == spot]['sc_id'].tolist()
 
-    # print(f'orig spot_cell_lst {spot_cell_lst}')
+    # logger.debug(f'orig spot_cell_lst {spot_cell_lst}')
     if nn_spot == [] or a_cc.sum().sum() == 0 or p == 0:
         # all neighbors are nan -> self problem
         # cell has no LR exp
         # only select by exp cor
-        # print(f'Cell selection for {spot} completed solely based on exp correlation. No Ligand/Receptor genes expressed')
+        # logger.debug(f'Cell selection for {spot} completed solely based on exp correlation. No Ligand/Receptor genes expressed')
         # picked_time, spot_cell_lst, exp_cor = cellReplaceByExp(spot_cell_lst, sc_exp, sc_meta, tp_idx_dict,
         #                                                         s_exp, picked_time,
         #                                                         repeat_penalty)
@@ -273,7 +275,7 @@ def reselect_cell(st_exp, spots_nn_lst, st_aff_profile_df,
     result.index = range(len(result))
     result.index = result.index.map(str)
     correlations = result['exp_cor_after']
-    print(f'\t Swapped solution: max - {np.max(correlations):.2f}, \
+    logger.debug(f'\t Swapped solution: max - {np.max(correlations):.2f}, \
     mean - {np.mean(correlations):.2f}, \
     min - {np.min(correlations):.2f}')
     return result, picked_time
@@ -297,13 +299,13 @@ def cal_sc_candi_aff_profile(s_exp, candi_exp, lr_df):
     st_R1 = s_exp[lr_df[1]]
     st_L2 = candi_exp[lr_df[0]]
     st_R2 = candi_exp[lr_df[1]]
-    #print(st_R2)
+    #logger.debug(st_R2)
     #st_LR_df1 = pd.concat([st_L1 * st_R1.values[i] for i in range(st_R1.shape[0])], keys=st_R1.index.tolist())
     st_LR_df1 = st_R2 * st_L1.values
-    #print(st_LR_df1)
+    #logger.debug(st_LR_df1)
     #st_LR_df2 = pd.concat([st_L2 * st_R2.values[i] for i in range(st_R2.shape[0])], keys=st_R2.index.tolist())
     st_LR_df2 = st_L2 * st_R1.values
-    #print(st_LR_df2)
+    #logger.debug(st_LR_df2)
     sc_agg_aff_profile_df = st_LR_df1.values + st_LR_df2
     return sc_agg_aff_profile_df
 
@@ -408,7 +410,7 @@ def cellReplaceByBoth(spot,spot_cell_lst, sc_exp, sc_meta, tp_idx_dict, sum_sc_a
         # update cell picked time
         picked_time.loc[cell, 'count'] -= 1
         picked_time.loc[max_idx, 'count'] += 1
-        # print(f'  Change cell {cell} exp_cor is {exp_cor}; inter_cor is {inter_cor}; mix cor of {spot} is {mix_corr}')
+        # logger.debug(f'  Change cell {cell} exp_cor is {exp_cor}; inter_cor is {inter_cor}; mix cor of {spot} is {mix_corr}')
     return picked_time, spot_cell_lst, exp_cor, inter_cor, mix_corr
 
 
@@ -420,22 +422,22 @@ def cellReplaceByExp(spot_cell_lst, sc_exp, sc_meta, tp_idx_dict,
     '''
     for i in range(len(spot_cell_lst)):
         cell = spot_cell_lst[i]
-        # print(cell)
+        # logger.debug(cell)
         spot_cell_lst.remove(cell)
-        print(spot_cell_lst)
+        logger.debug(spot_cell_lst)
         # calculate remain agg exp
         spot_remain_mat = sc_exp.loc[spot_cell_lst]
         remain_exp = np.sum(spot_remain_mat)
         # get candidate cells from the same type
         removed_type = sc_meta.loc[cell]['celltype']
         candi_cell_id = tp_idx_dict[removed_type]
-        print('candi_cell_id', candi_cell_id)
+        logger.debug('candi_cell_id', candi_cell_id)
         candi_exp = sc_exp.loc[candi_cell_id]
         # calculate replaced agg for each candidates
         candi_exp_sum = candi_exp + remain_exp
         # [exp cor]
         exp_candi_cor = candi_exp_sum.T.corrwith(s_exp)
-        print('adj_cor', exp_candi_cor)
+        logger.debug('adj_cor', exp_candi_cor)
         prob = half_life_prob(picked_time['count'].values,repeat_penalty)
         picked_time['prob'] = prob
         cor_df = exp_candi_cor
@@ -488,28 +490,18 @@ def expSwap_SPROUT(spot_cell_lst, s_sc_exp, sc_meta, trans_id_idx, tp_idx_dict,
         tmp_cell_id = spot_cell_lst.copy()
         if max_cor > max_cor_rep:
             max_cor_rep = max_cor
-            #print(f'insert {swaped_id} to {tmp_cell_id}')
+            #logger.debug(f'insert {swaped_id} to {tmp_cell_id}')
             tmp_cell_id.insert(0,swaped_id) 
             after_picked_time.loc[swaped_id] += 1
             after_picked_time.loc[cell_i] -= 1
         else:
-            #print(f'insert {cell_i} back to {tmp_cell_id}')
+            #logger.debug(f'insert {cell_i} back to {tmp_cell_id}')
             tmp_cell_id.insert(0,cell_i)
         spot_cell_lst = tmp_cell_id
     return after_picked_time, spot_cell_lst, max_cor_rep
 
 
 class CellSelectionSolver:
-
-    weight: pd.DataFrame # spot x cellType; 每种细胞在spot中的比重(st_decon)
-    st_exp: pd.DataFrame # spot x gene 每个基因在Spot中表达程度
-    st_coord: pd.DataFrame # spot x (x,y) Spot的坐标
-    sc_ref: pd.DataFrame # cell x gene
-    sc_exp: pd.DataFrame # cell x gene 每个基因在细胞中表达程度
-    sc_meta: pd.DataFrame # cell x unknown 细胞的基本信息 与cell_type_key配合使用
-    lr_df: pd.DataFrame # id x (L,R,score) 计算Affinity需要的LR配对表
-
-    # 原先的传参
     use_sc_orig = True
     p = 0.1
     mean_num_per_spot = 10
@@ -521,15 +513,7 @@ class CellSelectionSolver:
     num: pd.DataFrame # spot x celltype 其中所有数值都变成了整数
     
     def __init__(self, spex, use_sc_orig, p, mean_num_per_spot, mode, max_rep, repeat_penalty):
-        self.weight = spex.weight
-        self.st_exp = spex.st_exp
-        self.sc_exp = spex.sc_exp
-        self.lr_df = spex.lr_df
-        self.sc_meta = spex.sc_meta
-        self.cell_type_key = spex.cell_type_key
-        self.save_path = spex.save_path
-        self.spots_nn_lst = spex.spots_nn_lst
-        self.st_aff_profile_df = spex.st_aff_profile_df
+        self.spex = spex
 
         self.use_sc_orig = use_sc_orig
         self.p = p
@@ -537,6 +521,12 @@ class CellSelectionSolver:
         self.mode = mode
         self.max_rep = max_rep
         self.repeat_penalty = repeat_penalty
+
+    def __getattr__(self, k):
+        try:
+            return getattr(self.spex, k)
+        except AttributeError:
+            raise AttributeError(f"GradientDescent has no attr {k}")
 
     def estimateCellNum(self):
         # transpose because cytospace has cell as columns
@@ -559,12 +549,12 @@ class CellSelectionSolver:
     def calcNum(self):
         if self.mean_num_per_spot == 0:	
             self.num = self.weight	
-            print(f'\t mean_num_per_spot == 0; Using the exact cell number in each spot provided in weight.')
+            logger.debug(f'\t mean_num_per_spot == 0; Using the exact cell number in each spot provided in weight.')
         elif self.mean_num_per_spot == 1:
             self.num = self.weight.apply(lambda x: x.eq(x.max()).astype(int), axis=1)
-            print(f'\t mean_num_per_spot == 1; Using the idxmax celltype for each spot.')
+            logger.debug(f'\t mean_num_per_spot == 1; Using the idxmax celltype for each spot.')
         else:
-            print(f'\t Estimating the cell number in each spot by the deconvolution result.')	
+            logger.debug(f'\t Estimating the cell number in each spot by the deconvolution result.')	
             spot_cell_num = self.estimateCellNum()
             self.num = randomization(self.weight, spot_cell_num)
 
@@ -580,7 +570,7 @@ class CellSelectionSolver:
         #     sc_exp_re = self.alter_sc_exp.loc[sc_meta_re.index].copy()
         #     sc_meta_re.index = sc_meta_re['sc_id']
         #     sc_exp_re.index = sc_meta_re.index
-        #     print('Using sc agg for cell re-selection.')
+        #     logger.debug('Using sc agg for cell re-selection.')
         pass
 
     def solve(self):
@@ -589,17 +579,22 @@ class CellSelectionSolver:
 
         计算结果保存在自己的result_xxx相关属性中
         '''
+        logger.info("Starting cell selection")
+        logger.debug("0. calc num of cell per spot")
         self.calcNum()
             
         # 1. subset sc_exp and st_exp by intersection genes
+        logger.debug("1. filter gene")
         self.filter_st_exp, self.filter_sc_exp = pp.subset_inter(self.st_exp, self.sc_exp)
 
         # 2. feature selection
+        logger.debug("2. feature select")
         self.sort_genes = feature_sort(self.filter_sc_exp, degree = 2, span = 0.3)
         self.lr_hvg_genes = lr_shared_top_k_gene(self.sort_genes, self.lr_df, k = 3000, keep_lr_per = 1)
-        print(f'\t SpexMod selects {len(self.lr_hvg_genes)} feature genes.')
+        logger.debug(f'\t SpexMod selects {len(self.lr_hvg_genes)} feature genes.')
 
         # 3. scale and norm
+        logger.debug("3. scale and norm")
         self.trans_id_idx = pd.DataFrame(list(range(self.filter_sc_exp.shape[0])), index = self.filter_sc_exp.index)
         self.hvg_st_exp = self.filter_st_exp.loc[:,self.lr_hvg_genes]
         self.hvg_sc_exp = self.filter_sc_exp.loc[:,self.lr_hvg_genes]
@@ -611,6 +606,7 @@ class CellSelectionSolver:
         self.lr_df_align = self.lr_df[self.lr_df[0].isin(self.filter_st_exp.columns) & self.lr_df[1].isin(self.filter_st_exp.columns)].copy()
 
         # 4. init cell selection
+        logger.debug("4. init solution")
         self.spot_cell_dict, self.init_cor, self.picked_time =\
             init_solution(self.num, self.filter_st_exp.index.tolist(),
             self.csr_st_exp, self.csr_sc_exp, self.sc_meta[self.cell_type_key], 
@@ -626,22 +622,23 @@ class CellSelectionSolver:
         self.init_sc_df.to_csv(f'{self.save_path}/init_picked_res.csv')
 
         # 5. reselect cells
-        print('\t Swap selection start...')
+        logger.debug('5. Swap selection start...')
         if self.p == 0:
             # p == 0, use sprout, input norm_hvg_sc and norm_hvg_st
             for i in range(self.max_rep):
+                logger.debug(f'\tSwap selection iter {i} of {self.max_rep}')
                 self.sum_sc_agg_exp = get_sum_sc_agg(norm_hvg_sc, result, norm_hvg_st)
-                self.sc_agg_aff_profile_df = optimizers.cal_aff_profile(self.sum_sc_agg_exp, self.lr_df_align)
-                rs = reselect_cell
-                result, self.after_picked_time = rs(norm_hvg_st, self.spots_nn_lst, self.st_aff_profile_df, 
+                self.sc_agg_aff_profile_df = optimizers.cal_aff_profile(self.sum_sc_agg_exp, self.spots_nn_lst, self.lr_df_align)
+                result, self.after_picked_time = reselect_cell(norm_hvg_st, self.spots_nn_lst, self.st_aff_profile_df, 
                             norm_hvg_sc, self.csr_sc_exp, self.sc_meta, self.trans_id_idx,
                             self.sum_sc_agg_exp, self.sc_agg_aff_profile_df,
                             result, self.picked_time, self.lr_df_align, 
                             p = self.p, repeat_penalty = self.repeat_penalty)
         else:
             for i in range(self.max_rep):
+                logger.debug(f'\tSwap selection iter {i} of {self.max_rep}')
                 self.sum_sc_agg_exp = get_sum_sc_agg(self.filter_sc_exp,result,self.filter_st_exp)
-                self.sc_agg_aff_profile_df = optimizers.cal_aff_profile(self.sum_sc_agg_exp, self.lr_df_align)
+                self.sc_agg_aff_profile_df = optimizers.cal_aff_profile(self.sum_sc_agg_exp, self.spots_nn_lst, self.lr_df_align)
                 result, self.after_picked_time = reselect_cell(self.filter_st_exp, self.spots_nn_lst, self.st_aff_profile_df, 
                             self.filter_sc_exp, self.csr_sc_exp, self.sc_meta, self.trans_id_idx,
                             self.sum_sc_agg_exp, self.sc_agg_aff_profile_df,

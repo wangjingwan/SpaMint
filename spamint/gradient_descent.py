@@ -18,44 +18,26 @@ from . import preprocess as pp
 import pdb
 import cProfile
 import multiprocessing
+import logging as logger
 
 class GradientDescentSolver:
-    st_exp: pd.DataFrame # spot x gene 每个基因在Spot中表达程度
-    st_coord: pd.DataFrame # spot x (x,y) Spot的坐标
-    sc_ref: pd.DataFrame # cell x gene
-    sc_exp: pd.DataFrame # cell x gene 每个基因在细胞中表达程度
-    sc_meta: pd.DataFrame # cell x unknown 细胞的基本信息 与cell_type_key配合使用
-    lr_df: pd.DataFrame # id x (L,R,score) 计算Affinity需要的LR配对表
-
-    # 从cell select继承
-    sc_agg_meta: pd.DataFrame
-    lr_df_align: pd.DataFrame
+    # 通过__getattr__继承了SpaMint所有成员，此外还有：
 
     # 原先的传参（略）
 
     # 中间产物
+    spot_cell_dict: dict[str, list[str]]
     
     def __init__(self, spex, alpha, beta, gamma, delta, eta, 
                 init_sc_embed = False,
                 iteration = 20, k = 2, W_HVG = 2,
                 left_range = 1, right_range = 2, steps = 1, dim = 2):
-        self.st_exp = spex.st_exp
-        self.st_coord = spex.st_coord
-        self.sc_exp = spex.sc_exp
-        self.sc_ref = spex.sc_ref
-        self.lr_df = spex.lr_df
-        self.st_tp = spex.st_tp
-        self.sc_meta = spex.sc_meta
-        self.cell_type_key = spex.cell_type_key
-        self.save_path = spex.save_path
-        self.spots_nn_lst = spex.spots_nn_lst
-        self.st_aff_profile_df = spex.st_aff_profile_df
-        self.lr_df_align = spex.lr_df_align
-        self.sc_agg_meta = spex.sc_agg_meta
+        self.spex = spex
+
         self.alter_sc_exp = self.sc_exp.loc[self.sc_agg_meta['sc_id']]
         self.alter_sc_exp.index = self.sc_agg_meta.index
-        self.spot_cell_dict = self.sc_agg_meta.groupby('spot').apply(optimizers.apply_spot_cell).to_dict()
-        self.svg = spex.svg
+        self.spot_cell_dict = self.sc_agg_meta.groupby('spot')\
+            .apply(lambda x: x.index.tolist()).to_dict()
 
         self.ALPHA = alpha
         self.BETA = beta
@@ -72,14 +54,20 @@ class GradientDescentSolver:
         self.steps = steps
         self.dim = dim
 
+    def __getattr__(self, k):
+        try:
+            return getattr(self.spex, k)
+        except AttributeError:
+            raise AttributeError(f"GradientDescent has no attr {k}")
+
     def run_gradient(self):
         # 1. First term
         self.term1_df,self.loss1 = optimizers.cal_term1(self.alter_sc_exp,self.sc_agg_meta,self.st_exp,self.svg,self.W_HVG)
-        print('First-term calculation done!')
+        logger.debug('First-term calculation done!')
 
         # 2. Second term
         self.term2_df,self.loss2 = optimizers.cal_term2(self.alter_sc_exp,self.sc_ref)
-        print('Second-term calculation done!')
+        logger.debug('Second-term calculation done!')
 
         # 3. Third term, closer cells have larger affinity
         if not (self.st_tp == 'slide-seq' and hasattr(self, 'sc_knn')):
@@ -93,20 +81,21 @@ class GradientDescentSolver:
         # 3.3 get the paring genes (g') of gene g for each cells
         self.rl_agg = optimizers.generate_LR_agg(self.alter_sc_exp,self.lr_df)
         # 3.4 get the affinity
-        self.aff = optimizers.calcNeighborAffinityMat(self.spots_nn_lst, self.sc_agg_meta, self.lr_df, self.alter_sc_exp)
+        #self.aff = optimizers.calcNeighborAffinityMat(self.spots_nn_lst, self.spot_cell_dict, self.lr_df, self.alter_sc_exp)
+        self.aff = optimizers.calculate_affinity_mat(self.lr_df, self.alter_sc_exp)
         #np.fill_diagonal(self.aff,0)
         #不要转为DataFrame吧？不然不是相当于没稀疏吗
-        self.aff = pd.DataFrame(self.aff.toarray(), index = self.sc_agg_meta.index, columns=self.sc_agg_meta.index)
+        self.aff = pd.DataFrame(self.aff, index = self.sc_agg_meta.index, columns=self.sc_agg_meta.index)
         self.sc_knn = optimizers.findCellAffinityKNN(self.spots_nn_lst, self.sc_agg_meta, self.aff, self.K)
         # 3.5 Calculate the derivative
         self.term3_df,self.loss3 = optimizers.cal_term3(self.alter_sc_exp,self.sc_knn,self.aff,self.sc_dist,self.rl_agg)
-        print('Third term calculation done!')
+        logger.debug('Third term calculation done!')
 
         # 4. Fourth term, towards spot-spot affinity profile
         # self.rl_agg_align = optimizers.generate_LR_agg(self.alter_sc_exp,self.lr_df_align)
         self.term4_df,self.loss4 = optimizers.cal_term4(self.st_exp,self.sc_knn,self.st_aff_profile_df,self.alter_sc_exp,
                                                         self.sc_agg_meta,self.spot_cell_dict,self.lr_df_align)
-        print('Fourth term calculation done!')
+        logger.debug('Fourth term calculation done!')
         
         # 5. Fifth term, norm2 regulization
         self.term5_df,self.loss5 = optimizers.cal_term5(self.alter_sc_exp)
@@ -115,9 +104,9 @@ class GradientDescentSolver:
     def init_grad(self):
         if isinstance(self.init_sc_embed, pd.DataFrame):
             self.sc_coord = utils.check_sc_coord(self.init_sc_embed)
-            print('Using user provided init sc_coord.')
+            logger.debug('Using user provided init sc_coord.')
         else:
-            print('Init sc_coord by affinity embedding...')
+            logger.debug('Init sc_coord by affinity embedding...')
             # TODO 减少aff计算次数；使用sparse array
             self.sc_coord,_,_,_ = optimizers.aff_embedding(self.alter_sc_exp,self.st_coord,self.sc_agg_meta,self.lr_df,
                             self.save_path,self.left_range,self.right_range,self.steps,self.dim,verbose = False)
@@ -125,14 +114,14 @@ class GradientDescentSolver:
         # v5 calculte the initial loss of each term to balance their force.
         adj2,adj3,adj4,adj5 = optimizers.loss_adj(self.loss1,self.loss2,self.loss3,self.loss4,self.loss5)
         self.ALPHA,self.BETA,self.GAMMA,self.DELTA = self.ALPHA*adj2,self.BETA*adj3,self.GAMMA*adj4,self.DELTA*adj5
-        #self.sc_agg_meta[['UMAP1','UMAP2']] = self.sc_coord
-        print('Hyperparameters adjusted.')
+        self.sc_agg_meta[['UMAP1','UMAP2']] = self.sc_coord
+        logger.debug('Hyperparameters adjusted.')
 
 
     def gradient_descent(self):
         if not isinstance(self.sc_ref, np.ndarray):
             self.sc_ref = np.array(self.sc_ref.loc[self.sc_agg_meta['sc_id']])
-        print('Running v12 now...')
+        logger.debug('Running v12 now...')
         res_col = ['loss1','loss2','loss3','loss4','loss5','total']
         result = pd.DataFrame(columns=res_col)
         if self.st_tp == 'slide-seq':
@@ -145,7 +134,7 @@ class GradientDescentSolver:
         # result = pd.concat((result,tmp),axis=0)
         ######### init done ############
         for ite in range(self.iteration):
-            print(f'-----Start iteration {ite} -----')
+            logger.debug(f'-----Start iteration {ite} -----')
             # TODO 减少aff计算次数；使用sparse array
             if self.st_tp != 'slide-seq':
                 self.sc_coord,_,_,_ = optimizers.aff_embedding(self.alter_sc_exp,self.st_coord,self.sc_agg_meta,self.lr_df,
@@ -157,15 +146,15 @@ class GradientDescentSolver:
             self.alter_sc_exp[self.alter_sc_exp<0] = 0
             # v2 added
 
-            print(f'---{ite} self.loss4 {self.loss4} self.GAMMA {self.GAMMA} self.GAMMA*self.loss4 {self.GAMMA*self.loss4}')
+            logger.debug(f'---{ite} self.loss4 {self.loss4} self.GAMMA {self.GAMMA} self.GAMMA*self.loss4 {self.GAMMA*self.loss4}')
             loss = self.loss1 + self.ALPHA*self.loss2 + self.BETA*self.loss3 + self.GAMMA*self.loss4 + self.DELTA*self.loss5
             tmp = pd.DataFrame(np.array([[self.loss1,self.ALPHA*self.loss2,self.BETA*self.loss3,self.GAMMA*self.loss4,self.DELTA*self.loss5,loss]]),columns = res_col, index = [ite])
             result = pd.concat((result,tmp),axis=0)
-            print(f'---In iteration {ite}, the loss is:loss1:{self.loss1:.5f},loss2:{self.loss2:.5f},loss3:{self.loss3:.5f},', end="")
-            print(f'loss4:{self.loss4:.5f},loss5:{self.loss5:.5f}.')
-            print(f'---In iteration {ite}, the loss is:loss1:{self.loss1:.5f},loss2:{self.ALPHA*self.loss2:.5f},loss3:{self.BETA*self.loss3:.5f},', end="")
-            print(f'loss4:{self.GAMMA*self.loss4:.5f},loss5:{self.DELTA*self.loss5:.5f}.')
-            print(f'The total loss after iteration {ite} is {loss:.5f}.')
+            logger.debug(f'---In iteration {ite}, the loss is:loss1:{self.loss1:.5f},loss2:{self.loss2:.5f},loss3:{self.loss3:.5f},', end="")
+            logger.debug(f'loss4:{self.loss4:.5f},loss5:{self.loss5:.5f}.')
+            logger.debug(f'---In iteration {ite}, the loss is:loss1:{self.loss1:.5f},loss2:{self.ALPHA*self.loss2:.5f},loss3:{self.BETA*self.loss3:.5f},', end="")
+            logger.debug(f'loss4:{self.GAMMA*self.loss4:.5f},loss5:{self.DELTA*self.loss5:.5f}.')
+            logger.debug(f'The total loss after iteration {ite} is {loss:.5f}.')
 
         ### v5 add because spatalk demo
         # TODO check
@@ -178,7 +167,7 @@ class GradientDescentSolver:
             self.sc_coord,_,_,_ = optimizers.aff_embedding(self.alter_sc_exp,self.st_coord,self.sc_agg_meta,self.lr_df,
                                 self.save_path,self.left_range,self.right_range,self.steps,self.dim)
             _, sc_spot_center = optimizers.sc_prep(self.st_coord, self.sc_agg_meta)
-            self.sc_agg_meta[['st_x','st_y']] = sc_spot_center
+            self.sc_agg_meta[['st_x','st_y']] = sc_spot_center.values
             self.sc_agg_meta = optimizers.center_shift_embedding(self.sc_coord, self.sc_agg_meta, max_dist = 1)
         else:
             # v10

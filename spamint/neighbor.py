@@ -24,13 +24,21 @@ import pdb
 import multiprocessing
 import cProfile
 
-def neighbor_distance_matrix(sc_coord, sc_nn_list):
+def neighbor_cell_distance_matrix(
+        sc_coord: pd.DataFrame,
+        spots_nn_lst: dict[str, list[str]],
+        spot_cell_dict: dict[str, list[str]]):
     '''
-    类似distance_matrix，但返回sparse matrix
+    类似`distance_matrix(sc_coord, sc_coord)`，但返回sparse matrix
 
     只计算每个cell与自己neighbor spot中细胞的距离，其他留0
-
-    `sc_coord`: `pd.DataFrame` @ cell x (x,y)
-    `sc_nn_list`: `dict[str, list[str]]` cell x cell
     '''
-    pass
+    count = len(sc_coord.index)
+    ret = lil_matrix( (count, count) )
+    for spot in spots_nn_lst:
+        nn_spots = spots_nn_lst[spot]
+        nn_cells = []
+        for sp in nn_spots:
+            nn_cells += spot_cell_dict[sp]
+    
+    return ret.tocsr()

@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import anndata
 # import time
-# import logging
+import logging as logger
 import os
 
 
@@ -25,7 +25,7 @@ def load_lr_df(species = 'Human',lr_dir = None):
         lr_df = read_csv_tsv(lr_dir)
     else:
         lr_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__))) + '/LR/'
-        # print(lr_path)
+        # logger.debug(lr_path)
         if species in ['Human','Mouse']:
             # to lowercase
             species = species.lower()
@@ -147,7 +147,7 @@ def prep_all_adata(sc_exp = None, st_exp = None, sc_distribution = None,
     # v6 canceled ref adata
     # sc_ref = prep_adata(scale_poisson_spot,sc_ref_meta,SP)
     if sc_adata.shape[1] == st_adata.shape[1] and st_adata.shape[1] == sc_ref.shape[1]:
-        print(f'Data clean is done! Using {st_adata.shape[1]} shared genes .')
+        logger.debug(f'Data clean is done! Using {st_adata.shape[1]} shared genes .')
     return sc_adata, st_adata, sc_ref, lr_df
 
 
@@ -192,7 +192,7 @@ def prep_all_adata_merfish(sc_exp = None, st_exp = None, sc_distribution = None,
     # v6 canceled ref adata
     # sc_ref = prep_adata(scale_poisson_spot,sc_ref_meta,SP)
     if sc_adata.shape[1] == sc_ref.shape[1]:
-        print(f'Data clean and scale are done! Single-cell data has {sc_adata.shape[1]} genes, spatial data has {st_adata.shape[1]} genes.')
+        logger.debug(f'Data clean and scale are done! Single-cell data has {sc_adata.shape[1]} genes, spatial data has {st_adata.shape[1]} genes.')
     return sc_adata, st_adata, sc_ref, lr_df
 
 
