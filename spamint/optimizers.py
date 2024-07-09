@@ -4,6 +4,7 @@ from scipy.special import digamma
 from scipy.spatial import distance_matrix
 from scipy.sparse import lil_matrix
 from scipy.sparse import csr_matrix
+from scipy.sparse import coo_matrix
 from scipy.spatial import KDTree
 from scipy import sparse
 import scanpy as sc
@@ -56,7 +57,6 @@ def cal_term1(sc_exp,sc_meta,st_exp,hvg,W_HVG):
     '''  
     # add for merfish
     alter_sc_exp = sc_exp[st_exp.columns].copy()
-    pdb.set_trace()
     # 1.1 Aggregate exp of chosen cells for each spot 
     alter_sc_exp['spot'] = sc_meta['spot']
     sc_spot_sum = alter_sc_exp.groupby('spot').sum()
@@ -308,6 +308,40 @@ def complete_other_genes(alter_sc_exp, term_LR_df):
     term_df.update(term_LR_df)
     return term_df
 
+# 求出邻近Spot中和细胞Affinity最大的几个细胞 返回dict
+def findCellAffinityKNN(spots_nn_lst,sc_meta,aff,k):
+    sc_knn = {}
+
+    pool = multiprocessing.Pool(8)
+    arglist = [(spot,spots_nn_lst,sc_meta,aff,k)
+               for spot in spots_nn_lst]
+    ret_list = pool.starmap(findCellAffinityKNNFn, arglist)
+    for ret in ret_list:
+      for cell in ret:
+        sc_knn[cell] = ret[cell]
+
+    # remove no neighbor cells
+    empty_keys = [k for k, v in sc_knn.items() if not v]
+    for k in empty_keys:
+        del sc_knn[k]
+
+    return sc_knn
+
+
+def findCellAffinityKNNFn(spot, spots_nn_lst, sc_meta, aff, k):
+    sc_knn = {}
+
+    st_neighbors = spots_nn_lst[spot]
+    sc_neighbors = sc_meta.query(" or ".join(
+      [(f'spot == "{x}"') for x in st_neighbors])).index.tolist()
+    sc_myself = sc_meta.query(f'spot == "{spot}"').index.tolist()
+
+    # 对这些细胞分别在sc_neighbor选出aff最大的k个
+    for sc in sc_myself:
+        sc_knn[sc] = aff.loc[sc][sc_neighbors].nlargest(k).index.tolist()
+
+    return sc_knn
+
 
 def cal_term3(alter_sc_exp,sc_knn,aff,sc_dist,rl_agg):
     # v3 added norm_aff and norm rl_cp to regulize the values
@@ -317,6 +351,7 @@ def cal_term3(alter_sc_exp,sc_knn,aff,sc_dist,rl_agg):
     MAX = 100
     norm_aff = np.sqrt(aff/2)
     term3_LR = pd.DataFrame()
+    #FIXME: 干脆删了sc_dist相关，不知道怎么改
     sc_dist_re = sc_dist.copy()
     mask = sc_dist_re != 0
     sc_dist_re[mask] = 1 / sc_dist_re[mask]
@@ -331,7 +366,7 @@ def cal_term3(alter_sc_exp,sc_knn,aff,sc_dist,rl_agg):
     cp_dist_df = sc_dist_re[ind]
     cp_aff_adj = utils.scale_global_MIN_MAX(cp_aff_df,MIN,MAX)
     cp_dist_adj = utils.scale_global_MIN_MAX(cp_dist_df,MIN,MAX)
-    tmp1 = cp_aff_adj - cp_dist_adj
+    tmp1 = cp_aff_adj #- cp_dist_adj
     tmp2 = tmp1.fillna(0)
     term3_LR = 2*rl_agg.dot(tmp2.T)/n_cp
     # fillna(0) because if a cell has no neighbor, /n_cp cause divide by zero error; generates NA.
@@ -345,13 +380,15 @@ def cal_term3(alter_sc_exp,sc_knn,aff,sc_dist,rl_agg):
     return term3_df,loss
 
 
-def cal_aff_profile(exp, lr_df):
+def cal_aff_profile(exp, nn_list, lr_df):
     # TODO: 重复计算的LRDF？
     lr_df_align = lr_df[lr_df[0].isin(exp.columns) & lr_df[1].isin(exp.columns)].copy()
     st_L = exp[lr_df_align[0]]
     st_R = exp[lr_df_align[1]]
-    st_LR_df = pd.concat([st_L * st_R.values[i] for i in range(st_R.shape[0])], keys=st_R.index.tolist())
-    st_RL_df = pd.concat([st_R * st_L.values[i] for i in range(st_L.shape[0])], keys=st_L.index.tolist())
+    st_LR_df = pd.concat([st_L.loc[nn_list[st_R.iloc[i].name]] * st_R.values[i]\
+                          for i in range(st_R.shape[0])], keys=st_R.index.tolist())
+    st_RL_df = pd.concat([st_R.loc[nn_list[st_L.iloc[i].name]] * st_L.values[i]\
+                          for i in range(st_L.shape[0])], keys=st_L.index.tolist())
     st_aff_profile_df = st_LR_df + st_RL_df.values
     return st_aff_profile_df
 
@@ -372,10 +409,6 @@ def cal_sc_aff_profile(cell, cell_n, exp, lr_df):
     #print(st_LR_df2)
     st_aff_profile_df = st_LR_df1.values + st_LR_df2
     return st_aff_profile_df
-
-
-def apply_spot_cell(x):
-    return x.index.tolist()
 
 
 def multiply_spots(df,res_tmp):
@@ -699,6 +732,63 @@ def calculate_affinity_mat(lr_df, data):
     affinitymat = np.dot(np.dot(np.diag(allscores), A).T , B)
     
     return affinitymat
+
+
+# 计算Affinity矩阵，不过只计算各个细胞近邻Spot的，其他留0
+def calcNeighborAffinityMat(spots_nn_lst, spot_cell_dict, lr_df, sc_exp):
+    sc_count = len(sc_exp.index.tolist())
+    aff_mat = lil_matrix( (sc_count, sc_count) )
+
+    # fetch the ligands' and receptors' indexes in the TPM matrix 
+    # data.shape = gene * cell
+    data = sc_exp.T
+    genes = data.index.tolist()
+    lr_df = lr_df[lr_df[0].isin(genes) & lr_df[1].isin(genes)]
+    # replace Gene ID to the index of each gene in data matrix #
+    gene_index = dict(zip(genes, range(len(genes))))
+    index = lr_df.replace({0: gene_index, 1:gene_index}).astype(int)
+
+    ligandindex = index[0].reset_index()[0]
+    receptorindex = index[1].reset_index()[1]
+    scores = index[2].reset_index()[2]
+
+    Atotake = ligandindex
+    Btotake = receptorindex
+    allscores = scores
+    idx_data = data.reset_index()
+    del idx_data[idx_data.columns[0]]
+    
+    for i in range(len(ligandindex)):
+        if ligandindex[i] != receptorindex[i]:
+            Atotake = Atotake.append(pd.Series(receptorindex[i]),ignore_index=True)
+            Btotake = Btotake.append(pd.Series(ligandindex[i]),ignore_index=True)
+            allscores = allscores.append(pd.Series(scores[i]),ignore_index=True)
+
+    # A = idx_data.loc[Atotake.tolist()]
+    # B = idx_data.loc[Btotake.tolist()]
+
+    # affinitymat = np.dot(np.dot(np.diag(allscores), A).T , B)
+
+    score_diag = np.diag(allscores)
+    for spot in spots_nn_lst:
+        st_neighbors = spots_nn_lst[spot]
+        st_neighbors.append(spot)
+        sc_neighbors = []
+        for x in st_neighbors: sc_neighbors += spot_cell_dict[x]
+        sc_myself = spot_cell_dict[spot]
+        # 计算sc_myself与sc_neighbor中所有的aff并填表
+        A = idx_data[sc_myself].loc[Atotake]
+        B = idx_data[sc_neighbors].loc[Btotake]
+
+        # FIXME: 虽然节约内存了但是时间方面远不如之前的只进行一次dot
+        # FIXME: 必须找一个好办法来循环进行这么多次dot操作
+        # FIXME: multiprocessing在这里非常不好使 overhead太严重了
+        affinitymat = np.dot(np.dot(score_diag, A).T , B)
+        for i in range(len(sc_myself)):
+            for j in range(len(sc_neighbors)):
+                aff_mat[int(sc_myself[i]), int(sc_neighbors[j])] = affinitymat[i, j]
+
+    return aff_mat.tocsr()
 
 
 def aff_embedding(alter_sc_exp,st_coord,sc_meta,lr_df,save_path, left_range = 1, right_range = 2, steps = 1, dim = 2,verbose = False):
