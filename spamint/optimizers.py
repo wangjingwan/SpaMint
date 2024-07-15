@@ -167,17 +167,13 @@ def findSpotNeighbor(st_coord,st_tp):
     st_dist[st_dist != 1] = 0
     return st_dist
 
-def findCellKNN_fn(st_i,st_array,st_kdtree,sc_meta,sc_coord,k):
+def findCellKNN_fn(spot,spots_nn_lst,spot_cell_dict,sc_coord,k):
     sc_knn = {}
     # 1. Find neighboring cells from adjacent spot
-    # 1.1 找出所有spot的k个近邻
-    # 1.2 对要研究的spot，找出自己相邻spot的所有细胞
-    _, indexes = st_kdtree.query(st_array[st_i], k=4+1)
-    indexes = indexes.tolist()
-    indexes.remove(st_i)
-    sc_neighbors = sc_meta.query(" or ".join(
-      [('spot == "spot_' + str(x) + '"') for x in indexes])).index.tolist()
-    sc_myself = sc_meta.query(f'spot == "spot_{st_i}"').index.tolist()
+    st_neighbors = spots_nn_lst[spot]
+    sc_neighbors = []
+    for x in st_neighbors: sc_neighbors += spot_cell_dict[x]
+    sc_myself = spot_cell_dict[spot]
 
     sc_coord_neighbor = sc_coord[[int(x) for x in sc_neighbors]]
     sc_coord_myself = sc_coord[[int(x) for x in sc_myself]]
@@ -191,17 +187,13 @@ def findCellKNN_fn(st_i,st_array,st_kdtree,sc_meta,sc_coord,k):
         sc_knn[sc_myself[sc_i]] = [str(x) for x in sc_idxes]
     return sc_knn
 
-st_array = None
-st_kdtree = None
 
-def findCellKNN(st_coord,st_tp,sc_meta,sc_coord,k): 
+def findCellKNN(spots_nn_lst, st_tp, sc_meta, spot_cell_dict, sc_coord, k): 
     '''
     st_tp = 'visum'
     k = 2
     sc_coord = obj_spex.sc_coord
     '''
-    global st_array
-    global st_kdtree
     if st_tp == 'slide-seq':
         sc_knn = findCellKNN_slide(sc_meta,sc_coord)
     else:
@@ -209,12 +201,9 @@ def findCellKNN(st_coord,st_tp,sc_meta,sc_coord,k):
         for key in sc_meta.index.tolist():
             sc_knn[key] = []
 
-        if type(st_array) == type(None):
-            st_array = st_coord.to_numpy()
-            st_kdtree = KDTree(data=st_array)
         pool = multiprocessing.Pool(8)
-        arglist = [(x,st_array,st_kdtree,sc_meta,sc_coord,k)
-                   for x in range(len(st_array))]
+        arglist = [(x,spots_nn_lst,spot_cell_dict,sc_coord,k)
+                   for x in spots_nn_lst]
         ret_list = pool.starmap(findCellKNN_fn, arglist)
         for ret in ret_list:
           for cell in ret:
@@ -309,11 +298,11 @@ def complete_other_genes(alter_sc_exp, term_LR_df):
     return term_df
 
 # 求出邻近Spot中和细胞Affinity最大的几个细胞 返回dict
-def findCellAffinityKNN(spots_nn_lst,sc_meta,aff,k):
+def findCellAffinityKNN(spots_nn_lst,spot_cell_dict,aff,k):
     sc_knn = {}
 
     pool = multiprocessing.Pool(8)
-    arglist = [(spot,spots_nn_lst,sc_meta,aff,k)
+    arglist = [(spot,spots_nn_lst,spot_cell_dict,aff,k)
                for spot in spots_nn_lst]
     ret_list = pool.starmap(findCellAffinityKNNFn, arglist)
     for ret in ret_list:
@@ -328,13 +317,13 @@ def findCellAffinityKNN(spots_nn_lst,sc_meta,aff,k):
     return sc_knn
 
 
-def findCellAffinityKNNFn(spot, spots_nn_lst, sc_meta, aff, k):
+def findCellAffinityKNNFn(spot, spots_nn_lst, spot_cell_dict, aff, k):
     sc_knn = {}
 
     st_neighbors = spots_nn_lst[spot]
-    sc_neighbors = sc_meta.query(" or ".join(
-      [(f'spot == "{x}"') for x in st_neighbors])).index.tolist()
-    sc_myself = sc_meta.query(f'spot == "{spot}"').index.tolist()
+    sc_neighbors = []
+    for x in st_neighbors: sc_neighbors += spot_cell_dict[x]
+    sc_myself = spot_cell_dict[spot]
 
     # 对这些细胞分别在sc_neighbor选出aff最大的k个
     for sc in sc_myself:
@@ -351,22 +340,38 @@ def cal_term3(alter_sc_exp,sc_knn,aff,sc_dist,rl_agg):
     MAX = 100
     norm_aff = np.sqrt(aff/2)
     term3_LR = pd.DataFrame()
-    #FIXME: 干脆删了sc_dist相关，不知道怎么改
-    sc_dist_re = sc_dist.copy()
-    mask = sc_dist_re != 0
-    sc_dist_re[mask] = 1 / sc_dist_re[mask]
+    #'''
+    #sc_dist_re = sc_dist.copy()
     # ind: the neighboring indicator matrix
     # Row: cell; Col: the neighbor of this cell
-    ind = pd.DataFrame([[False]*norm_aff.shape[1]]*norm_aff.shape[0],columns = norm_aff.columns,index = norm_aff.index)
+    ind = pd.DataFrame(False, columns = norm_aff.columns,index = norm_aff.index)
     for idx, cp in sc_knn.items():
         ind.loc[idx,cp] = True
     # n_cp: the neighboring cells of each cell (row-wise summation)
     n_cp = ind.sum(axis = 1)
     cp_aff_df = norm_aff[ind]
-    cp_dist_df = sc_dist_re[ind]
+    cp_dist_df = sc_dist[ind]
+    '''
+    lil_cp_aff_df = lil_matrix(norm_aff.shape)
+    lil_cp_dist_df = lil_matrix(sc_dist.shape)
+    n_cp = pd.Series()
+    for idx, cp in sc_knn.items():
+        n_cp[idx] = len(cp)
+        for idx2 in cp:
+            lil_cp_aff_df[int(idx), int(idx2)] = norm_aff.loc[idx, idx2]
+            lil_cp_dist_df[int(idx), int(idx2)] = sc_dist.loc[idx, idx2]
+
+    cp_aff_df = pd.DataFrame.sparse.from_spmatrix(
+        lil_cp_aff_df, columns = norm_aff.columns, index = norm_aff.index)
+    cp_dist_df = pd.DataFrame.sparse.from_spmatrix(
+        lil_cp_dist_df, columns = sc_dist.columns, index = sc_dist.index)
+    '''
+
+    mask = cp_dist_df != 0
+    cp_dist_df[mask] = 1 / cp_dist_df[mask]
     cp_aff_adj = utils.scale_global_MIN_MAX(cp_aff_df,MIN,MAX)
     cp_dist_adj = utils.scale_global_MIN_MAX(cp_dist_df,MIN,MAX)
-    tmp1 = cp_aff_adj #- cp_dist_adj
+    tmp1 = cp_aff_adj - cp_dist_adj
     tmp2 = tmp1.fillna(0)
     term3_LR = 2*rl_agg.dot(tmp2.T)/n_cp
     # fillna(0) because if a cell has no neighbor, /n_cp cause divide by zero error; generates NA.
@@ -385,10 +390,17 @@ def cal_aff_profile(exp, nn_list, lr_df):
     lr_df_align = lr_df[lr_df[0].isin(exp.columns) & lr_df[1].isin(exp.columns)].copy()
     st_L = exp[lr_df_align[0]]
     st_R = exp[lr_df_align[1]]
-    st_LR_df = pd.concat([st_L.loc[nn_list[st_R.iloc[i].name]] * st_R.values[i]\
-                          for i in range(st_R.shape[0])], keys=st_R.index.tolist())
-    st_RL_df = pd.concat([st_R.loc[nn_list[st_L.iloc[i].name]] * st_L.values[i]\
-                          for i in range(st_L.shape[0])], keys=st_L.index.tolist())
+    st_L_list = []
+    st_R_list = []
+    for i in range(st_L.shape[0]):
+        l = st_L.loc[nn_list[st_R.iloc[i].name]]
+        l = l.append(st_L.loc[st_R.iloc[i].name])
+        r = st_R.loc[nn_list[st_L.iloc[i].name]]
+        r = r.append(st_R.loc[st_L.iloc[i].name])
+        st_L_list.append(l * st_R.values[i])
+        st_R_list.append(r * st_L.values[i])
+    st_LR_df = pd.concat(st_L_list, keys=st_R.index.tolist())
+    st_RL_df = pd.concat(st_R_list, keys=st_L.index.tolist())
     st_aff_profile_df = st_LR_df + st_RL_df.values
     return st_aff_profile_df
 
@@ -671,18 +683,22 @@ def coord_eva(coord, ans, chunk_size = 12):
 
 
 def embedding(sparse_A, ans, path, left_range = 0, right_range = 30, steps = 30, dim = 2, verbose = False):
+    logging.debug("Preprocessing affinity matrix")
     aff = np.array(sparse_A, dtype = 'f')
     mask1 = (aff < 9e-300) & (aff >= 0)
     aff[mask1]=0.1
     np.fill_diagonal(aff,0)
     mask = aff != 0
-    aff[mask] = 1 /aff[mask]
+    aff[mask] = 1 / aff[mask]
     #D = csr_matrix(aff) too less neighbor will occur
     del mask
+    logging.debug("finished preprocess")
     max_shape = 0
     for i in range(int(left_range),int(right_range)):
         for j in range(steps):
-            coord = umap.UMAP(n_components=dim, metric = "precomputed", n_neighbors=(i+1)*15, random_state = 100*j+3).fit_transform(aff)
+            coord = umap.UMAP(
+                n_components = dim, metric = "precomputed", n_neighbors=(i+1)*15,
+                random_state = 100 * j + 3).fit_transform(aff)
             cor = coord_eva(coord, ans, chunk_size = 12)
             if verbose:
                 # save all reconstructed result
@@ -771,7 +787,7 @@ def calcNeighborAffinityMat(spots_nn_lst, spot_cell_dict, lr_df, sc_exp):
 
     score_diag = np.diag(allscores)
     for spot in spots_nn_lst:
-        st_neighbors = spots_nn_lst[spot]
+        st_neighbors = [k for k in spots_nn_lst[spot]]
         st_neighbors.append(spot)
         sc_neighbors = []
         for x in st_neighbors: sc_neighbors += spot_cell_dict[x]
@@ -793,6 +809,7 @@ def calcNeighborAffinityMat(spots_nn_lst, spot_cell_dict, lr_df, sc_exp):
 
 def aff_embedding(alter_sc_exp,st_coord,sc_meta,lr_df,save_path, left_range = 1, right_range = 2, steps = 1, dim = 2,verbose = False):
     # 3.1 prep initial embedding that term3 requires
+    logging.debug("Start embedding...")
     ordered_st_coord, sc_dis_mat, ans = sc_adj_cal(st_coord, sc_meta, chunk_size = 12)
     ########################print(f'Start affinity calculation...') 
     sparse_A = chunk_cal_aff(alter_sc_exp, sc_dis_mat, lr_df)
@@ -800,10 +817,23 @@ def aff_embedding(alter_sc_exp,st_coord,sc_meta,lr_df,save_path, left_range = 1,
     sparse_A = sparse_A + np.ones(sparse_A.shape) * 0.1
     np.fill_diagonal(sparse_A,1)
     #########################print(f'End affinity calculation.')
-    #print(f'Start embedding...')
     coord = embedding(sparse_A, ans, save_path, left_range, right_range, steps, dim, verbose = verbose)
-    #print(f'End embedding.')
+    logging.debug("End embedding.")
     return coord,ordered_st_coord,sparse_A,ans
+
+
+'''
+def aff_embedding(sc_exp, spots_nn_lst, spot_cell_dict, lr_df, save_path, left_range = 1, right_range = 2, steps = 1, dim = 2, verbose = False):
+    logging.debug("Start embedding...")
+    aff = calcNeighborAffinityMat(spots_nn_lst, spot_cell_dict, lr_df, sc_exp)
+    #aff[aff!=0] = aff[aff!=0] - 0.1
+    #aff = aff + np.ones(aff.shape) * 0.1
+    aff[aff == 0] = 0.1
+    np.fill_diagonal(aff, 1)
+    coord = embedding(aff, ans, save_path, left_range, right_range, steps, dim, verbose = verbose)
+    logging.debug("End embedding.")
+    return coord
+'''
 
 
 def get_hvg(adata):
