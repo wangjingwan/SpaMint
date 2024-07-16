@@ -108,8 +108,10 @@ class GradientDescentSolver:
         else:
             logger.debug('Init sc_coord by affinity embedding...')
             # TODO 减少aff计算次数；使用sparse array
-            self.sc_coord,_,_,_ = optimizers.aff_embedding(self.alter_sc_exp,self.st_coord,self.sc_agg_meta,self.lr_df,
-                            self.save_path,self.left_range,self.right_range,self.steps,self.dim,verbose = False)
+            self.sc_coord,_,_,_ = optimizers.aff_embedding(
+                self.spots_nn_lst, self.spot_cell_dict,
+                self.alter_sc_exp,self.st_coord,self.sc_agg_meta,self.lr_df,
+                self.save_path,self.left_range,self.right_range,self.steps,self.dim,verbose = False)
         self.run_gradient()
         # v5 calculte the initial loss of each term to balance their force.
         adj2,adj3,adj4,adj5 = optimizers.loss_adj(self.loss1,self.loss2,self.loss3,self.loss4,self.loss5)
@@ -137,8 +139,10 @@ class GradientDescentSolver:
             logger.debug(f'-----Start iteration {ite} -----')
             # TODO 减少aff计算次数；使用sparse array
             if self.st_tp != 'slide-seq':
-                self.sc_coord,_,_,_ = optimizers.aff_embedding(self.alter_sc_exp,self.st_coord,self.sc_agg_meta,self.lr_df,
-                                self.save_path,self.left_range,self.right_range,self.steps,self.dim)
+                self.sc_coord,_,_,_ = optimizers.aff_embedding(
+                    self.spots_nn_lst, self.spot_cell_dict,
+                    self.alter_sc_exp,self.st_coord,self.sc_agg_meta,self.lr_df,
+                    self.save_path,self.left_range,self.right_range,self.steps,self.dim)
             self.run_gradient()
             gradient = self.term1_df - self.ALPHA*self.term2_df + self.BETA*self.term3_df + self.GAMMA*self.term4_df + self.DELTA*self.term5_df
             self.alter_sc_exp = self.alter_sc_exp - self.ETA * gradient
@@ -164,8 +168,10 @@ class GradientDescentSolver:
         self.result = result
         ### v6 add for center shift  
         if self.st_tp != 'slide-seq':
-            self.sc_coord,_,_,_ = optimizers.aff_embedding(self.alter_sc_exp,self.st_coord,self.sc_agg_meta,self.lr_df,
-                                self.save_path,self.left_range,self.right_range,self.steps,self.dim)
+            self.sc_coord,_,_,_ = optimizers.aff_embedding(
+                self.spots_nn_lst, self.spot_cell_dict,
+                self.alter_sc_exp,self.st_coord,self.sc_agg_meta,self.lr_df,
+                self.save_path,self.left_range,self.right_range,self.steps,self.dim)
             _, sc_spot_center = optimizers.sc_prep(self.st_coord, self.sc_agg_meta)
             self.sc_agg_meta[['st_x','st_y']] = sc_spot_center.values
             self.sc_agg_meta = optimizers.center_shift_embedding(self.sc_coord, self.sc_agg_meta, max_dist = 1)
