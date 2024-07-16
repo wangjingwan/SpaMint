@@ -917,10 +917,13 @@ def aff_embedding(sc_exp, spots_nn_lst, spot_cell_dict, lr_df, save_path, left_r
 '''
 
 
-def get_hvg(adata):
+def get_hvg(adata, data_type = 'sc', n_top_genes = 3000):
     p_adata = sc.pp.normalize_total(adata, target_sum=1e4,copy = True)
     sc.pp.log1p(p_adata)
-    sc.pp.highly_variable_genes(p_adata, min_mean=0.0125, max_mean=3, min_disp=0.5)
+    if data_type == 'sc':
+        sc.pp.highly_variable_genes(p_adata, flavor="seurat_v3",n_top_genes = n_top_genes)
+    else:
+        sc.pp.highly_variable_genes(p_adata, min_mean=0.0125, max_mean=3, min_disp=0.5)
     # sc.pl.highly_variable_genes(p_adata)
     p_adata = p_adata[:, p_adata.var.highly_variable]
     # adata.layers["log"] = p_adataUMAP

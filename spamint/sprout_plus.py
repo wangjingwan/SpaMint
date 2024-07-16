@@ -102,6 +102,7 @@ class SpaMint:
         self.st_exp = self.st_adata.to_df()
         self.sc_exp = self.sc_adata.to_df()
         self.sc_meta = self.sc_adata.obs.copy()
+        self.sc_hvg = optimizers.get_hvg(self.sc_adata, data_type = 'sc', n_top_genes = 3000)
         del self.sc_adata
         # 3. generate obj
         # TODO redundant with feature selection in init
