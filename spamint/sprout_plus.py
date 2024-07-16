@@ -30,7 +30,7 @@ import numpy as np
 import os
 import cProfile
 import pdb
-
+from typing import Dict, List
 '''
 @author: Jingwan WANG
 Created on 2022/11/09
@@ -57,7 +57,7 @@ class SpaMint:
     svg: pd.DataFrame
 
     # TODO: 计算时产生的中间量成员
-    spots_nn_lst: dict[str, list[str]] # 每个spot的邻近spot 防止重复计算
+    spots_nn_lst: Dict[str, List[str]] # 每个spot的邻近spot 防止重复计算
     st_aff_profile_df: pd.DataFrame # spot x spot x aff_gene
     sc_agg_meta: pd.DataFrame # cell x [...] 主要指明cell位于的spot
     lr_df_align: pd.DataFrame
@@ -102,6 +102,7 @@ class SpaMint:
         self.st_exp = self.st_adata.to_df()
         self.sc_exp = self.sc_adata.to_df()
         self.sc_meta = self.sc_adata.obs.copy()
+        self.sc_hvg = optimizers.get_hvg(self.sc_adata, data_type = 'sc', n_top_genes = 3000)
         del self.sc_adata
         # 3. generate obj
         # TODO redundant with feature selection in init

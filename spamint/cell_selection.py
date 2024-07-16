@@ -107,19 +107,26 @@ def feature_sort(exp, degree = 2, span = 0.3):
     return sort_reg_var
 
 
-def lr_shared_top_k_gene(sort_reg_var, lr_df, k = 3000, keep_lr_per = 0.8):
+def lr_shared_top_k_gene(genes, lr_df, k = 3000, keep_lr_per = 0.8):
     # shared lr genes
-    genes = sort_reg_var.index.tolist()
     lr_share_genes = list(set(lr_df[0]).union(set(lr_df[1])).intersection(set(genes)))
-    # keep top lr genes
-    lr_var = sort_reg_var.loc[lr_share_genes]
-    take_num = int(len(lr_var) * keep_lr_per)
-    p = "{:.0%}".format(keep_lr_per)
-    a = lr_var.sort_values(by = 0, ascending=False).iloc[0:take_num].index.tolist()
-    # combine with top k feature genes
-    feature_genes = sort_reg_var.iloc[0:k].index.tolist()
     lr_feature_genes = list(set(feature_genes + a))
     return lr_feature_genes
+
+
+# def lr_shared_top_k_gene_old(sort_reg_var, lr_df, k = 3000, keep_lr_per = 0.8):
+#     # shared lr genes
+#     genes = sort_reg_var.index.tolist()
+#     lr_share_genes = list(set(lr_df[0]).union(set(lr_df[1])).intersection(set(genes)))
+#     # keep top lr genes
+#     lr_var = sort_reg_var.loc[lr_share_genes]
+#     take_num = int(len(lr_var) * keep_lr_per)
+#     p = "{:.0%}".format(keep_lr_per)
+#     a = lr_var.sort_values(by = 0, ascending=False).iloc[0:take_num].index.tolist()
+#     # combine with top k feature genes
+#     feature_genes = sort_reg_var.iloc[0:k].index.tolist()
+#     lr_feature_genes = list(set(feature_genes + a))
+#     return lr_feature_genes
 
 
 def norm_center(data):
@@ -589,8 +596,10 @@ class CellSelectionSolver:
 
         # 2. feature selection
         logger.debug("2. feature select")
-        self.sort_genes = feature_sort(self.filter_sc_exp, degree = 2, span = 0.3)
-        self.lr_hvg_genes = lr_shared_top_k_gene(self.sort_genes, self.lr_df, k = 3000, keep_lr_per = 1)
+        # self.sort_genes = feature_sort(self.filter_sc_exp, degree = 2, span = 0.3)
+        # self.lr_hvg_genes = lr_shared_top_k_gene(self.sc_hvg, self.lr_df, k = 3000, keep_lr_per = 1)
+        lr_genes = set(self.lr_df[0]).union(set(self.lr_df[1]))
+        self.lr_hvg_genes = list(self.sc_hvg | lr_genes)
         logger.debug(f'\t SpexMod selects {len(self.lr_hvg_genes)} feature genes.')
 
         # 3. scale and norm
