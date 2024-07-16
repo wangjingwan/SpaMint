@@ -19,6 +19,7 @@ import pdb
 import cProfile
 import multiprocessing
 import logging as logger
+from typing import Dict, List
 
 class GradientDescentSolver:
     # 通过__getattr__继承了SpaMint所有成员，此外还有：
@@ -26,7 +27,7 @@ class GradientDescentSolver:
     # 原先的传参（略）
 
     # 中间产物
-    spot_cell_dict: dict[str, list[str]]
+    spot_cell_dict: Dict[str, List[str]]
     
     def __init__(self, spex, alpha, beta, gamma, delta, eta, 
                 init_sc_embed = False,
