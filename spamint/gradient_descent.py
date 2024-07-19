@@ -105,6 +105,7 @@ class GradientDescentSolver:
     def init_grad(self):
         if isinstance(self.init_sc_embed, pd.DataFrame):
             self.sc_coord = utils.check_sc_coord(self.init_sc_embed)
+            self.sc_coord = self.sc_coord.to_numpy()
             logger.debug('Using user provided init sc_coord.')
         else:
             logger.debug('Init sc_coord by affinity embedding...')

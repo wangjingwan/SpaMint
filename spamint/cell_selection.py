@@ -519,10 +519,9 @@ class CellSelectionSolver:
     # 中间产物
     num: pd.DataFrame # spot x celltype 其中所有数值都变成了整数
     
-    def __init__(self, spex, use_sc_orig, p, mean_num_per_spot, mode, max_rep, repeat_penalty):
+    def __init__(self, spex, p, mean_num_per_spot, mode, max_rep, repeat_penalty):
         self.spex = spex
 
-        self.use_sc_orig = use_sc_orig
         self.p = p
         self.mean_num_per_spot = mean_num_per_spot
         self.mode = mode
@@ -550,7 +549,8 @@ class CellSelectionSolver:
         fit_parameters = np.polyfit(np.array([min_RNA_reads, mean_RNA_reads]),
                                     np.array([min_cell_numbers, self.mean_num_per_spot]), 1)
         polynomial = np.poly1d(fit_parameters)
-        cell_number_to_node_assignment = polynomial(RNA_reads).astype(int)
+        # cell_number_to_node_assignment = polynomial(RNA_reads).astype(int)
+        cell_number_to_node_assignment = np.round(polynomial(RNA_reads)).astype(int)
         return cell_number_to_node_assignment
 
     def calcNum(self):
@@ -565,20 +565,6 @@ class CellSelectionSolver:
             spot_cell_num = self.estimateCellNum()
             self.num = randomization(self.weight, spot_cell_num)
 
-    def unk1(self):
-        # if use_sc_orig:
-        #     sc_exp_re = self.sc_exp
-        #     sc_meta_re = self.sc_meta
-        # TODO
-        # else:
-        #     # No original sc_exp, use sc_agg for cell selection
-        #     sc_meta_re = self.sc_meta[['sc_id','celltype']].copy()
-        #     sc_meta_re = sc_meta_re.drop_duplicates()
-        #     sc_exp_re = self.alter_sc_exp.loc[sc_meta_re.index].copy()
-        #     sc_meta_re.index = sc_meta_re['sc_id']
-        #     sc_exp_re.index = sc_meta_re.index
-        #     logger.debug('Using sc agg for cell re-selection.')
-        pass
 
     def solve(self):
         '''
@@ -659,4 +645,3 @@ class CellSelectionSolver:
             self.picked_time.to_csv(f'{self.save_path}/picked_time{i}.csv')
 
         self.result = result
-

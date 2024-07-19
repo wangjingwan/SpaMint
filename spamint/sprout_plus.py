@@ -136,6 +136,28 @@ class SpaMint:
         # 6. save result
         self.sc_agg_meta = result
         return result
+    
+    def load_predefined_cells(self, user_sc_exp, user_sc_agg_meta):
+        '''
+        Use user provided cell selection result and spatial expression data
+        Parameters
+        ----------
+        user_sc_exp : pd.DataFrame, optional, default None
+            The spatial expression data for the user-defined cells.
+        user_sc_agg_meta : pd.DataFrame, optional, default None
+            The cell selection result for the user-defined cells.
+        '''
+        self.sc_agg_meta = user_sc_agg_meta
+        self.alter_sc_exp = user_sc_exp
+        self.sc_agg_meta.index = self.sc_agg_meta.index.astype(str)
+        self.alter_sc_exp.index = self.sc_agg_meta.index
+        self.sc_agg_meta['spot'] = self.sc_agg_meta['spot'].astype(str)
+        self.alter_sc_exp = self.alter_sc_exp[self.st_exp.columns]
+        self.alter_sc_exp.columns.get_level_values(0).name = 'symbol'
+        self.spot_cell_dict = self.sc_agg_meta.groupby('spot').apply(lambda x: x.index.tolist()).to_dict()
+        self.alter_sc_exp = pp.scale_sum(self.alter_sc_exp,1e4)
+        self.lr_df_align = self.lr_df[self.lr_df[0].isin(self.alter_sc_exp.columns) & self.lr_df[1].isin(self.alter_sc_exp.columns)].copy()
+        return self.sc_agg_meta
 
 
     def gradient_descent(self, alpha, beta, gamma, delta, eta, 
