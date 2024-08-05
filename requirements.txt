@@ -4,4 +4,6 @@ numpy
 scipy
 pandas==1.5.2
 scanpy
+scikit-misc
 loess
+#torch 请手动安装torch

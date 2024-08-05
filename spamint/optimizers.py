@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from numba import njit
 from scipy.special import digamma
 from scipy.spatial import distance_matrix
 from scipy.sparse import lil_matrix
@@ -93,7 +94,7 @@ def cal_term2(alter_sc_exp,sc_distribution):
     term2 = sc_distribution - digamma(alter_sc_exp + 1).values
     term2_df = pd.DataFrame(term2,index = alter_sc_exp.index,columns=alter_sc_exp.columns)
     loss_2 = mean_squared_error(sc_distribution, alter_sc_exp)
-    return term2_df,loss_2     
+    return term2_df,loss_2
 
 
 def findSpotKNN_old(st_coord, st_tp): 
@@ -336,9 +337,11 @@ def cal_term3(alter_sc_exp,sc_knn,aff,sc_dist,rl_agg):
     # v3 added norm_aff and norm rl_cp to regulize the values
     # v5 Updated the calculation of term3 with [ind], accelerated.
     # v5 Scale both data to a fixed range every time
+    logging.debug("Term3: calc cp_aff_df & cp_aff_df")
     MIN = 0
     MAX = 100
     norm_aff = np.sqrt(aff/2)
+    logging.debug("Term3: norm_aff OK")
     term3_LR = pd.DataFrame()
     #'''
     #sc_dist_re = sc_dist.copy()
@@ -347,6 +350,7 @@ def cal_term3(alter_sc_exp,sc_knn,aff,sc_dist,rl_agg):
     ind = pd.DataFrame(False, columns = norm_aff.columns,index = norm_aff.index)
     for idx, cp in sc_knn.items():
         ind.loc[idx,cp] = True
+
     # n_cp: the neighboring cells of each cell (row-wise summation)
     n_cp = ind.sum(axis = 1)
     cp_aff_df = norm_aff[ind]
@@ -365,12 +369,14 @@ def cal_term3(alter_sc_exp,sc_knn,aff,sc_dist,rl_agg):
         lil_cp_aff_df, columns = norm_aff.columns, index = norm_aff.index)
     cp_dist_df = pd.DataFrame.sparse.from_spmatrix(
         lil_cp_dist_df, columns = sc_dist.columns, index = sc_dist.index)
-    '''
+    #'''
 
+    logging.debug("Term3: calc delta & loss")
     mask = cp_dist_df != 0
     cp_dist_df[mask] = 1 / cp_dist_df[mask]
     cp_aff_adj = utils.scale_global_MIN_MAX(cp_aff_df,MIN,MAX)
     cp_dist_adj = utils.scale_global_MIN_MAX(cp_dist_df,MIN,MAX)
+    logging.debug("Term3: adj OK")
     tmp1 = cp_aff_adj - cp_dist_adj
     tmp2 = tmp1.fillna(0)
     term3_LR = 2*rl_agg.dot(tmp2.T)/n_cp
@@ -514,7 +520,7 @@ def cal_term4(st_exp,sc_knn,st_aff_profile_df,sc_exp,sc_meta,spot_cell_dict,lr_d
     n_knn = 0
     pool = multiprocessing.Pool(8)
     arglist = [(x,sc_knn,st_aff_profile_df,sc_exp,sc_meta,spot_cell_dict,lr_df)
-               for x in st_exp.index]
+              for x in st_exp.index]
     ret_list = pool.starmap(cal_term4_fn, arglist)
     for ret in ret_list:
         term4_LR = pd.concat([term4_LR,ret[0]],axis =0)

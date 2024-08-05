@@ -1,25 +1,21 @@
+import torch
 import numpy as np
 import pandas as pd
-
-from scipy.sparse import csr_matrix
-from scipy.spatial import KDTree
-from scipy.special import digamma
-from scipy.spatial import distance_matrix
-from scipy.sparse import lil_matrix
-from scipy import sparse
-import scanpy as sc
-from sklearn.metrics import mean_squared_error
-
-from loess.loess_1d import loess_1d
-REALMIN = np.finfo(float).tiny
-from . import optimizers
-from . import utils
-from . import preprocess as pp
-import pdb
-import cProfile
-import multiprocessing
-import logging as logger
 from typing import Dict, List
+import logging as logger
+import pdb
+from sklearn.preprocessing import LabelEncoder
+
+from . import optimizers
+
+def test_grad_loss(grad1, loss1, grad2, loss2):
+    grad = grad1 - grad2
+    loss = loss1 - loss2
+    if loss <= 1e-8 and (grad <= 1e-6).all().all():
+        logger.debug('Grad test passed')
+    else:
+        logger.debug('Grad test failed!')
+        pdb.set_trace()
 
 class GradientDescentSolver:
     # 通过__getattr__继承了SpaMint所有成员，此外还有：
@@ -55,22 +51,107 @@ class GradientDescentSolver:
         self.steps = steps
         self.dim = dim
 
+
     def __getattr__(self, k):
         try:
             return getattr(self.spex, k)
         except AttributeError:
             raise AttributeError(f"GradientDescent has no attr {k}")
+        
+
+    # 将DataFrame全部Tensor化 column和index另外存储
+    def preprocess(self):
+        if not isinstance(self.sc_ref, torch.Tensor):
+            self.sc_ref_tensor = torch.from_numpy(np.array(self.sc_ref.loc[self.sc_agg_meta['sc_id']]))
+        else:
+            self.sc_ref_tensor = torch.from_numpy(self.sc_ref)
+        # 对sc_exp: 全是数值 保存列的map即可
+        self.sc_exp_columns_map = {k: v for v, k in enumerate(self.alter_sc_exp.columns)}
+        self.sc_exp_tensor = torch.from_numpy(self.alter_sc_exp.to_numpy())
+        # 对st_exp: 同前
+        self.st_exp_columns_map = {k: v for v, k in enumerate(self.st_exp.columns)}
+        self.st_exp_tensor = torch.from_numpy(self.st_exp.to_numpy())
+        # 对sc_agg_meta: 有字符串 需要用LabelEncoder
+
+
+    def term1(self):
+        # add for merfish
+        alter_sc_exp = self.alter_sc_exp[self.st_exp.columns].copy()
+        # 1.1 Aggregate exp of chosen cells for each spot 
+        alter_sc_exp['spot'] = self.sc_agg_meta['spot']
+        sc_spot_sum = alter_sc_exp.groupby('spot').sum()
+        del alter_sc_exp['spot']
+        sc_spot_sum = sc_spot_sum.loc[self.st_exp.index]
+        # 1.2 equalize sc_spot_sum by dividing cell number each spot
+        cell_n_spot = self.sc_agg_meta.groupby('spot').count().loc[self.st_exp.index]
+        div_sc_spot = sc_spot_sum.div(cell_n_spot.iloc[:,0].values, axis=0)
+        st_exp_tensor = torch.from_numpy(self.st_exp.to_numpy().astype(float))
+        div_sc_spot_tensor = torch.from_numpy(div_sc_spot.to_numpy().astype(float))
+        criterion = torch.nn.MSELoss()
+        div_sc_spot_tensor.requires_grad_()
+        loss = criterion(div_sc_spot_tensor, st_exp_tensor)
+        loss.backward()
+        grad = div_sc_spot_tensor.grad
+
+        term1_df = pd.DataFrame(grad.numpy(), index=div_sc_spot.index, columns=div_sc_spot.columns)
+        term1_df *= (div_sc_spot.shape[0] * div_sc_spot.shape[1])
+
+        # 1.3 add weight of hvg
+        hvg = list(self.svg)
+        nvg = list(set(self.st_exp.columns).difference(set(hvg)))
+        weight_nvg = pd.DataFrame(np.ones((self.st_exp.shape[0],len(nvg))),columns = nvg,  index = self.st_exp.index)
+        weight_hvg = pd.DataFrame(np.ones((self.st_exp.shape[0],len(hvg)))*self.W_HVG,columns = hvg,  index = self.st_exp.index)
+        weight = pd.concat((weight_hvg,weight_nvg),axis = 1)
+        weight = weight[self.st_exp.columns]
+        term1_df *= weight
+
+        # 1.4 Broadcast gradient for each cell
+        term1_df = term1_df.loc[self.sc_agg_meta['spot']]
+        term1_df.index = alter_sc_exp.index
+        # add for merfish
+        term1_df = optimizers.complete_other_genes(self.alter_sc_exp, term1_df)
+        return term1_df, float(loss)
+
+    def term2(self):
+        sc_ref_tensor = torch.from_numpy(self.sc_ref)
+        sc_exp_tensor = torch.from_numpy(self.alter_sc_exp.values)
+        term2 = sc_ref_tensor - torch.digamma(sc_exp_tensor + 1)
+        term2_df = pd.DataFrame(term2.numpy(),index = self.alter_sc_exp.index,columns=self.alter_sc_exp.columns)
+        criterion = torch.nn.MSELoss()
+        loss = criterion(sc_ref_tensor, sc_exp_tensor)
+        return term2_df, float(loss)
+
+    def term3(self):
+        return term3_df, float(loss)
+    
+    def term4(self):
+        return grad, loss
+    
+    def term5(self):
+        return grad, loss
 
     def run_gradient(self):
         # 1. First term
-        self.term1_df,self.loss1 = optimizers.cal_term1(self.alter_sc_exp,self.sc_agg_meta,self.st_exp,self.svg,self.W_HVG)
+        '''
+        logger.debug('Term1 (original) start')
+        self._term1_df,self._loss1 = optimizers.cal_term1(
+            self.alter_sc_exp,self.sc_agg_meta,self.st_exp,self.svg,self.W_HVG)
+        logger.debug('Term1 (torch) start')
+        self.term1_df, self.loss1 = self.term1()
         logger.debug('First-term calculation done!')
-
+        test_grad_loss(self._term1_df, self._loss1, self.term1_df, self.loss1)
+        
         # 2. Second term
-        self.term2_df,self.loss2 = optimizers.cal_term2(self.alter_sc_exp,self.sc_ref)
+        logger.debug('Term2 (original) start')
+        self._term2_df,self._loss2 = optimizers.cal_term2(self.alter_sc_exp,self.sc_ref)
+        logger.debug('Term2 (torch) start')
+        self.term2_df, self.loss2 = self.term2()
         logger.debug('Second-term calculation done!')
+        test_grad_loss(self._term2_df, self._loss2, self.term2_df, self.loss2)
+        '''
 
         # 3. Third term, closer cells have larger affinity
+        # 需要先求出aff矩阵与distance矩阵（都是只需要求neighbor之间的）
         term3_knn = False
         if not (self.st_tp == 'slide-seq' and hasattr(self, 'sc_knn')):
             # if slide-seq and already have found sc_knn
@@ -96,6 +177,7 @@ class GradientDescentSolver:
         self.term3_df,self.loss3 = optimizers.cal_term3(self.alter_sc_exp,self.sc_knn,self.aff,self.sc_dist,self.rl_agg)
         logger.debug('Third term calculation done!')
 
+        '''
         # 4. Fourth term, towards spot-spot affinity profile
         # self.rl_agg_align = optimizers.generate_LR_agg(self.alter_sc_exp,self.lr_df_align)
         self.term4_df,self.loss4 = optimizers.cal_term4(self.st_exp,self.sc_knn,self.st_aff_profile_df,self.alter_sc_exp,
@@ -104,7 +186,8 @@ class GradientDescentSolver:
         
         # 5. Fifth term, norm2 regulization
         self.term5_df,self.loss5 = optimizers.cal_term5(self.alter_sc_exp)
-        
+        '''
+
 
     def init_grad(self):
         if isinstance(self.init_sc_embed, pd.DataFrame):
@@ -127,6 +210,22 @@ class GradientDescentSolver:
 
 
     def gradient_descent(self):
+        self.preprocess()
+        logger.debug('Running v13 now...')
+        res_col = ['loss1','loss2','loss3','loss4','loss5','total']
+        #if self.st_tp != 'slide-seq':
+        # 调试需要
+        # 看起来每次都会需要进行aff embedding 为了term3
+        # 合理安排一下可以节约一次affinity mat的计算
+        if not hasattr(self, 'sc_coord'):
+                self.sc_coord,_,_,_ = optimizers.aff_embedding(
+                    self.spots_nn_lst, self.spot_cell_dict,
+                    self.alter_sc_exp,self.st_coord,self.sc_agg_meta,self.lr_df,
+                    self.save_path,self.left_range,self.right_range,self.steps,self.dim, verbose=True)
+        self.run_gradient()
+        pass
+
+    def ps(self):
         if not isinstance(self.sc_ref, np.ndarray):
             self.sc_ref = np.array(self.sc_ref.loc[self.sc_agg_meta['sc_id']])
         logger.debug('Running v12 now...')

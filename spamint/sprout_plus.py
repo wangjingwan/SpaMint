@@ -5,7 +5,8 @@ from . import utils
 from . import cell_selection
 from . import preprocess as pp
 from .cell_selection import CellSelectionSolver
-from .gradient_descent import GradientDescentSolver
+#from .gradient_descent import GradientDescentSolver
+from .gd_torch import GradientDescentSolver
 
 import time
 import sys
@@ -31,6 +32,7 @@ import os
 import cProfile
 import pdb
 from typing import Dict, List
+
 '''
 @author: Jingwan WANG
 Created on 2022/11/09
@@ -127,7 +129,7 @@ class SpaMint:
 
 
     def select_cells(self, use_sc_orig = True, p = 0.1, mean_num_per_spot = 10, mode = 'strict', max_rep = 3, repeat_penalty = 10):
-        solver = CellSelectionSolver(self, use_sc_orig, p, mean_num_per_spot, mode, max_rep, repeat_penalty)
+        solver = CellSelectionSolver(self, p, mean_num_per_spot, mode, max_rep, repeat_penalty)
         self.select_cells_solver = solver
         solver.solve()
         result = solver.result
