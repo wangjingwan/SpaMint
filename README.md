@@ -7,7 +7,16 @@ The software implementation of the method in
 * umap-learn, 
 
 # Installation
-
+## 1. Through source code
+```sh
+wget https://github.com/deepomicslab/SPROUT/archive/refs/heads/SPROUT_fast.zip](https://github.com/wangjingwan/SpaMint/archive/refs/heads/master.zip
+unzip master.zip
+cd SpaMint-master
+conda create --name strint_fast python=3.9
+conda activate strint_fast
+pip install -r requirements.txt
+```
+## 2. Through venv
 ```sh
 $ git clone <repo url>
 $ cd SpaMint
