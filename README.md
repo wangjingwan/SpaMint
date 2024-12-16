@@ -9,7 +9,7 @@ The software implementation of the method in
 # Installation
 ## 1. Through source code
 ```sh
-wget https://github.com/deepomicslab/SPROUT/archive/refs/heads/SPROUT_fast.zip](https://github.com/wangjingwan/SpaMint/archive/refs/heads/master.zip
+wget https://github.com/wangjingwan/SpaMint/archive/refs/heads/master.zip
 unzip master.zip
 cd SpaMint-master
 conda create --name strint_fast python=3.9
